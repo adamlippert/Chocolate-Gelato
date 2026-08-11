@@ -107,6 +107,22 @@
               </label>
             </div>
 
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableDirectPlay" />
+                <span>Direct play streams (do not proxy through the server)</span>
+              </label>
+              <div class="fieldDescription">
+                Hands the real stream URL to the client so it fetches the media itself, instead of the server
+                downloading and relaying every byte. Cuts server bandwidth and start-up buffering.
+                <strong>The stream URL becomes visible to the client</strong>, including any debrid token embedded
+                in it. Clients still fall back to server streaming when they can't play the format natively, and
+                P2P streams are always proxied. Direct play is not supported on Samsung (Tizen), LG (webOS) or
+                Opera TV clients, and is disabled for users with the
+                <em>Force remote source transcoding</em> permission.
+              </div>
+            </div>
+
             <div class="checkboxContainer checkboxContainer-withDescription" style="margin-bottom: 0.5em;">
               <label>
                 <input is="emby-checkbox" type="checkbox" id="chkFilterUnreleased" />
@@ -294,6 +310,7 @@
         const chkEnableMixed = page.querySelector('#chkEnableMixed');
         const chkExtendLocalSeriesTrees = page.querySelector('#chkExtendLocalSeriesTrees');
         const chkDisableSearch = page.querySelector('#chkDisableSearch');
+        const chkEnableDirectPlay = page.querySelector('#chkEnableDirectPlay');
         const chkFilterUnreleased = page.querySelector('#chkFilterUnreleased');
         const txtBufferDays = page.querySelector('#txtBufferDays');
         const txtFFmpegAnalyzeDuration = page.querySelector('#txtFFmpegAnalyzeDuration');
@@ -588,6 +605,7 @@
             if (chkEnableMixed) chkEnableMixed.checked = cfg.EnableMixed ?? true;
             if (chkExtendLocalSeriesTrees) chkExtendLocalSeriesTrees.checked = cfg.ExtendLocalSeriesTrees ?? false;
             if (chkDisableSearch) chkDisableSearch.checked = cfg.DisableSearch || false;
+            if (chkEnableDirectPlay) chkEnableDirectPlay.checked = cfg.EnableDirectPlay || false;
             if (chkFilterUnreleased) chkFilterUnreleased.checked = cfg.FilterUnreleased || false;
             if (txtBufferDays) txtBufferDays.value = cfg.FilterUnreleasedBufferDays ?? 0;
             if (txtFFmpegAnalyzeDuration) txtFFmpegAnalyzeDuration.value = cfg.FFmpegAnalyzeDuration || "5M";
@@ -622,6 +640,7 @@
             cfg.ExtendLocalSeriesTrees = chkExtendLocalSeriesTrees.checked;
 
             cfg.DisableSearch = chkDisableSearch.checked;
+            cfg.EnableDirectPlay = chkEnableDirectPlay.checked;
             cfg.FilterUnreleased = chkFilterUnreleased.checked;
             cfg.FilterUnreleasedBufferDays = txtBufferDays.value !== '' ? parseInt(txtBufferDays.value) : 0;
 

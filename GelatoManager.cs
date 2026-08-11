@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using Gelato.Config;
 using Gelato.Decorators;
 using Jellyfin.Data.Enums;
@@ -41,6 +42,20 @@ public sealed class GelatoManager(
         var networkConfig = serverConfig.GetNetworkConfiguration();
         return networkConfig.InternalHttpPort;
     }
+
+    /// <summary>
+    /// True when the path points at the plugin's own P2P endpoint (see SyncStreams), which is bound
+    /// to loopback on the server. Those URLs are meaningless to a client and must always be proxied,
+    /// regardless of the EnableDirectPlay setting.
+    /// </summary>
+    public static bool IsLoopbackStreamUrl(string? path) =>
+        !string.IsNullOrEmpty(path)
+        && Uri.TryCreate(path, UriKind.Absolute, out var uri)
+        && IPAddress.TryParse(uri.Host, out var ip)
+        && IPAddress.IsLoopback(ip)
+        && uri.AbsolutePath.Equals(TorrentStreamPath, StringComparison.OrdinalIgnoreCase);
+
+    private const string TorrentStreamPath = "/gelato/stream";
 
     public void SetStremioSubtitlesCache(Guid guid, List<StremioSubtitle> subs)
     {
@@ -486,7 +501,7 @@ public sealed class GelatoManager(
             var index = i + 1;
             var path = s.IsFile()
                 ? s.Url
-                : $"http://127.0.0.1:{httpPort}/gelato/stream?ih={s.InfoHash}"
+                : $"http://127.0.0.1:{httpPort}{TorrentStreamPath}?ih={s.InfoHash}"
                     + (s.FileIdx is not null ? $"&idx={s.FileIdx}" : "")
                     + (
                         s.Sources is { Count: > 0 }

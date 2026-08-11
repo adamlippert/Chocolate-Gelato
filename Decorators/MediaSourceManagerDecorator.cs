@@ -405,11 +405,29 @@ public sealed class MediaSourceManagerDecorator(
 
         // Stub path after probing is done so the real URL is never sent to clients.
         // Force File protocol so clients proxy through Jellyfin instead of direct-playing.
+        //
+        // With EnableDirectPlay the real URL is left in place, so the client fetches the media
+        // itself and the server never carries the bytes. P2P streams are excluded: they resolve to
+        // the plugin's own loopback endpoint, which a client cannot reach.
         if (ctx.GetActionName() == "GetPostedPlaybackInfo")
         {
-            selected.Path = "/stub";
-            selected.IsRemote = false;
-            selected.Protocol = MediaProtocol.File;
+            var directPlay =
+                GelatoPlugin.Instance!.GetConfig(user.Id).EnableDirectPlay
+                && !GelatoManager.IsLoopbackStreamUrl(selected.Path);
+
+            if (directPlay)
+            {
+                _log.LogDebug(
+                    "Direct play enabled for {ItemId}; handing stream URL to the client",
+                    item.Id
+                );
+            }
+            else
+            {
+                selected.Path = "/stub";
+                selected.IsRemote = false;
+                selected.Protocol = MediaProtocol.File;
+            }
         }
 
         return [selected];

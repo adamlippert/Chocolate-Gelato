@@ -28,6 +28,14 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool DisableSearch { get; set; } = false;
     public bool EnableJavaScriptInjection { get; set; } = false;
     public bool LazyImages { get; set; } = false;
+
+    /// <summary>
+    /// When enabled, the real stream URL is handed to the client in the PlaybackInfo response so
+    /// the client fetches the media directly instead of having the server proxy every byte.
+    /// Saves server bandwidth, but exposes the stream URL (including any debrid token it carries)
+    /// to anyone who can inspect the client's network traffic.
+    /// </summary>
+    public bool EnableDirectPlay { get; set; } = false;
     public List<CatalogConfig> Catalogs { get; set; } = [];
     public List<UserConfig> UserConfigs { get; set; } = [];
 
@@ -99,6 +107,7 @@ public class UserConfig
             FFmpegProbeSize = baseConfig.FFmpegProbeSize,
             CreateCollections = baseConfig.CreateCollections,
             MaxCollectionItems = baseConfig.MaxCollectionItems,
+            EnableDirectPlay = baseConfig.EnableDirectPlay,
             UserConfigs = baseConfig.UserConfigs,
         };
     }
