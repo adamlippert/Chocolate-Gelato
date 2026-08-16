@@ -1,4 +1,5 @@
 using System.Net;
+using MediaBrowser.Common.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Gelato.Tmdb;
@@ -7,18 +8,27 @@ namespace Gelato.Tmdb;
 /// TMDB HTTP access for collection sync: key gating, a single shared concurrency
 /// limit, and retry with backoff.
 /// </summary>
-public sealed class TmdbClient(IHttpClientFactory httpFactory, ILogger<TmdbClient> log)
+public sealed class TmdbClient(
+    IHttpClientFactory httpFactory,
+    TmdbDetailCache cache,
+    ILogger<TmdbClient> log
+)
 {
     private const string BaseUrl = "https://api.themoviedb.org/3";
     private const int MaxAttempts = 5;
+
+    // A collection's `parts` array grows whenever a sequel ships, so its cache entry has to
+    // expire. Movie details never change and are read with no maximum age.
+    private static readonly TimeSpan CollectionMaxAge = TimeSpan.FromDays(1);
 
     // One shared gate across every caller. TMDB throttles per key and per IP, so
     // parallelism beyond this buys nothing but 429s.
     private static readonly SemaphoreSlim Gate = new(8, 8);
 
-    private readonly TmdbDetailCache _cache = new(
-        Path.Combine(Path.GetTempPath(), "gelato", "tmdb-cache")
-    );
+    /// <summary>The on-disk cache location, under Jellyfin's cache path rather than /tmp —
+    /// the shipped systemd unit sets PrivateTmp=yes, so /tmp dies on every restart.</summary>
+    public static string CacheDirectoryFor(IApplicationPaths appPaths) =>
+        Path.Combine(appPaths.CachePath, "gelato", "tmdb");
 
     private static string? CurrentKey() =>
         TmdbKeyResolver.Resolve(
@@ -30,15 +40,25 @@ public sealed class TmdbClient(IHttpClientFactory httpFactory, ILogger<TmdbClien
     public bool IsEnabled => CurrentKey() is not null;
 
     public Task<TmdbCollection?> GetCollectionAsync(int collectionId, CancellationToken ct) =>
-        GetAsync<TmdbCollection>($"collection/{collectionId}", $"collection:{collectionId}", ct);
+        GetAsync<TmdbCollection>(
+            $"collection/{collectionId}",
+            $"collection:{collectionId}",
+            ct,
+            CollectionMaxAge
+        );
 
     public Task<TmdbMovieDetail?> GetMovieAsync(int movieId, CancellationToken ct) =>
-        GetAsync<TmdbMovieDetail>($"movie/{movieId}", $"movie:{movieId}", ct);
+        GetAsync<TmdbMovieDetail>($"movie/{movieId}", $"movie:{movieId}", ct, maxCacheAge: null);
 
-    private async Task<T?> GetAsync<T>(string path, string cacheKey, CancellationToken ct)
+    private async Task<T?> GetAsync<T>(
+        string path,
+        string cacheKey,
+        CancellationToken ct,
+        TimeSpan? maxCacheAge
+    )
         where T : class
     {
-        if (_cache.TryGet<T>(cacheKey, out var cached))
+        if (cache.TryGet<T>(cacheKey, out var cached, maxCacheAge))
             return cached;
 
         var key = CurrentKey();
@@ -54,15 +74,54 @@ public sealed class TmdbClient(IHttpClientFactory httpFactory, ILogger<TmdbClien
         {
             await Gate.WaitAsync(ct).ConfigureAwait(false);
             HttpResponseMessage resp;
+            Exception? transportError = null;
             try
             {
                 var client = httpFactory.CreateClient(nameof(TmdbClient));
                 client.Timeout = TimeSpan.FromSeconds(30);
                 resp = await client.GetAsync(url, ct).ConfigureAwait(false);
             }
+            // DNS failure, connection reset, TLS error — retryable transport faults. Also
+            // HttpClient's own timeout, which since .NET 5 surfaces as TaskCanceledException
+            // and so IS an OperationCanceledException. Callers rethrow those to honour real
+            // cancellation, so letting a timeout escape would abort a whole backfill. Only a
+            // genuine trip of `ct` is allowed out of this method.
+            catch (Exception ex)
+                when (ex is HttpRequestException
+                    || (ex is TaskCanceledException && !ct.IsCancellationRequested)
+                )
+            {
+                transportError = ex;
+                resp = null!;
+            }
             finally
             {
                 Gate.Release();
+            }
+
+            // Handled outside the gate so backoff does not occupy a concurrency slot.
+            if (transportError is not null)
+            {
+                if (attempt == MaxAttempts)
+                {
+                    log.LogWarning(
+                        transportError,
+                        "TMDB request failed for {Path}: transport error",
+                        path
+                    );
+                    return null;
+                }
+
+                var transportDelay = TmdbBackoff.Compute(attempt, null);
+                log.LogDebug(
+                    transportError,
+                    "TMDB transport error for {Path}, retrying in {Delay}s (attempt {Attempt})",
+                    path,
+                    transportDelay.TotalSeconds,
+                    attempt
+                );
+                await Task.Delay(transportDelay, ct).ConfigureAwait(false);
+                continue;
             }
 
             using (resp)
@@ -70,12 +129,24 @@ public sealed class TmdbClient(IHttpClientFactory httpFactory, ILogger<TmdbClien
                 if (resp.IsSuccessStatusCode)
                 {
                     var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                    var value = System.Text.Json.JsonSerializer.Deserialize<T>(
-                        body,
-                        TmdbJson.Options
-                    );
+                    T? value;
+                    try
+                    {
+                        value = System.Text.Json.JsonSerializer.Deserialize<T>(
+                            body,
+                            TmdbJson.Options
+                        );
+                    }
+                    catch (System.Text.Json.JsonException ex)
+                    {
+                        // A captive portal or corporate proxy answering 200 with an HTML error
+                        // page lands here. Not retryable — the response was well-formed HTTP.
+                        log.LogWarning(ex, "TMDB returned an unparseable body for {Path}", path);
+                        return null;
+                    }
+
                     if (value is not null)
-                        _cache.Set(cacheKey, value);
+                        cache.Set(cacheKey, value);
                     return value;
                 }
 

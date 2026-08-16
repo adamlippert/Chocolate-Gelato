@@ -7,9 +7,14 @@ namespace Gelato.Tmdb;
 /// <summary>
 /// On-disk cache of TMDB detail responses.
 ///
-/// Movie details are the bulk of a backfill and their <c>imdb_id</c> never changes,
-/// so they are cached indefinitely rather than with the five-minute in-memory TTL
-/// used for Stremio metadata.
+/// Freshness is the caller's decision, not this class's: <see cref="TryGet{T}(string, out T?,
+/// TimeSpan?)"/> takes an optional maximum age and treats anything older as a miss.
+///
+/// Movie details are the bulk of a backfill and their <c>imdb_id</c> never changes, so callers
+/// read them with no maximum age — cached indefinitely rather than with the five-minute
+/// in-memory TTL used for Stremio metadata. Collections are the opposite: their <c>parts</c>
+/// array grows whenever a studio ships a sequel, so they must be read with a bounded age or a
+/// franchise collection would never gain a new film.
 /// </summary>
 public sealed class TmdbDetailCache(string cacheDirectory)
 {
@@ -22,7 +27,10 @@ public sealed class TmdbDetailCache(string cacheDirectory)
         return Path.Combine(_dir, hash + ".json");
     }
 
-    public bool TryGet<T>(string key, out T? value)
+    /// <param name="maxAge">
+    /// Treat an entry last written longer ago than this as a miss. Null caches indefinitely.
+    /// </param>
+    public bool TryGet<T>(string key, out T? value, TimeSpan? maxAge = null)
     {
         value = default;
         var path = PathFor(key);
@@ -32,6 +40,9 @@ public sealed class TmdbDetailCache(string cacheDirectory)
 
         try
         {
+            if (maxAge is { } age && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) > age)
+                return false;
+
             value = JsonSerializer.Deserialize<T>(File.ReadAllText(path), TmdbJson.Options);
             return value is not null;
         }
@@ -44,10 +55,12 @@ public sealed class TmdbDetailCache(string cacheDirectory)
 
     public void Set<T>(string key, T value)
     {
-        Directory.CreateDirectory(_dir);
-
         try
         {
+            // Inside the try: the cache directory now lives under Jellyfin's data paths, which
+            // may be read-only or owned by another user.
+            Directory.CreateDirectory(_dir);
+
             var path = PathFor(key);
             // Same directory, so same volume — File.Move is atomic here. Writing in place
             // is not, and concurrent callers for one key would otherwise tear the file.
