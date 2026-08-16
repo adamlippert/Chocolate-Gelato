@@ -61,12 +61,41 @@ this collection right now?*
 
 ```
 interface ICollectionSource
-    string DisplayName { get; }
+    CollectionKind Kind { get; }
     IAsyncEnumerable<TitleRef> EnumerateAsync(CollectionRow row, CancellationToken ct)
 ```
 
-`TitleRef` carries a TMDB id, an IMDb id where known, and a media type. Nothing else — metadata
-acquisition is the sync service's job, not the source's.
+> **Amended after implementation.** This originally declared `string DisplayName { get; }`. The
+> implemented member is `CollectionKind Kind`, and that is the correct one: the sync service and
+> the settings API both need to select *which source serves a row*, which is what `Kind` answers.
+> `DisplayName` had no consumer anywhere — the name a user sees comes from `CollectionRow.Name`,
+> not from the source.
+
+`TitleRef` carries a TMDB id, an IMDb id where known, and a media type. It also carries an
+optional `GroupKey`/`GroupName` pair — see the Auto-mode grouping note below. Nothing else —
+metadata acquisition is the sync service's job, not the source's.
+
+**Auto-mode grouping (decided during implementation; neither this spec nor the plan covered
+it).** One config row does not always mean one BoxSet. Franchise Auto mode discovers *N*
+franchises from the library in a single enumeration, and reconciling them all into the row's
+single BoxSet would produce one box of hundreds of unrelated films — not the "The Matrix
+Collection" this document promises, and Auto is the default mode. So:
+
+- A source may tag each `TitleRef` with a `GroupKey` (for franchises, the TMDB collection id)
+  and a `GroupName` (`belongs_to_collection.name`, falling back to the collection response's own
+  `name`; a franchise with neither is skipped rather than given an invented name).
+- The sync service groups resolved titles by `GroupKey` and reconciles **each group into its own
+  BoxSet**: provider id `gelato-collection.{rowId}.{groupKey}`, named `GroupName`.
+- A null `GroupKey` means the row's own BoxSet — provider id `gelato-collection.{rowId}`, named
+  `CollectionRow.Name`. Picked mode leaves both null, so its behaviour is unchanged.
+- `MaxItems` still applies across the row as a whole, not per group: it bounds how much work one
+  config entry can cause, and the user did not choose the group count.
+
+**Auto mode's blind spot.** Discovery reads `belongs_to_collection` from library movies that
+carry a TMDB provider id. Items created by earlier Gelato features (catalog import, search)
+generally carry only an IMDb id, because Stremio/AIOStreams metadata is IMDb-keyed. On an
+existing installation Auto mode is therefore blind to most of the library until those items are
+backfilled with TMDB ids. This is a known limitation of the design, not a defect in it.
 
 | Implementation | Enumeration |
 |---|---|
@@ -205,7 +234,15 @@ The backfill is the spike; steady state is trivial.
 
 ### 8.2 Mechanisms
 
-- **Shared rate limiter** across all TMDB calls, with backoff on 429 and `Retry-After` honoured.
+- **Shared concurrency limiter** across all TMDB calls, with backoff on 429 and `Retry-After`
+  honoured.
+
+  > **Amended after implementation.** This said "shared rate limiter", which implies a
+  > requests-per-interval budget. What ships is a *concurrency* limiter: a semaphore bounding
+  > how many TMDB requests are in flight at once, plus retry with exponential backoff that
+  > honours `Retry-After` on 429. Throughput is therefore shaped by in-flight count and
+  > observed pushback rather than by a fixed rate. The distinction matters if anyone later
+  > reasons about worst-case request rates from this document.
 - **Persistent detail cache.** The existing `_metaCache` is in-memory with a 5-minute TTL. TMDB
   detail responses want disk and a long TTL — `imdb_id` never changes.
 - **Checkpointed backfill.** Progress is recorded per row so an interrupted first run resumes rather
