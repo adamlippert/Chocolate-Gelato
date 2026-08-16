@@ -369,6 +369,28 @@ public sealed class CollectionSyncService(
 
         var meta = TmdbMetaAdapter.ToStremioMeta(detail);
 
+        // InsertMeta (below) calls EnrichMetaAsync, whose early-out is
+        // `meta.App_Extras?.ReleaseDates is not null`. Left unpopulated, EnrichMetaAsync would
+        // fetch release dates itself via GelatoStremioProvider.EnrichDigitalReleaseDateAsync,
+        // which uses the hardcoded community TMDB API key at GelatoStremioProvider.cs:205 —
+        // shared by every Gelato installation and sized for occasional lookups, not a backfill
+        // of thousands of titles. Fetch on our own keyed, cached TmdbClient instead so that
+        // shared key is never reached for these items, and so EnrichMetaAsync short-circuits.
+        //
+        // Do not skip this by stubbing App_Extras.ReleaseDates with an empty object instead —
+        // that would short-circuit EnrichMetaAsync too, but IntoBaseItem derives a movie's
+        // EndDate from GetDigitalReleaseDate(), and a missing digital date there falls back to
+        // the 9999 sentinel the unreleased filter reads as "not yet released", which could hide
+        // a newly added film. A failed fetch must not fail the item, so on null we simply leave
+        // ReleaseDates unset and let that existing sentinel behaviour stand.
+        var releaseDates = await tmdb.GetReleaseDatesAsync(titleRef.TmdbId, ct)
+            .ConfigureAwait(false);
+        if (releaseDates is not null)
+        {
+            meta.App_Extras ??= new StremioAppExtras();
+            meta.App_Extras.ReleaseDates = releaseDates;
+        }
+
         // allowRemoteRefresh MUST stay false. It looks like the more thorough option; it is
         // not. InsertMeta's remote-refresh branch fires when meta.ImdbId is null — which is
         // exactly the obscure films TMDB has no imdb_id for — and replaces the meta with an

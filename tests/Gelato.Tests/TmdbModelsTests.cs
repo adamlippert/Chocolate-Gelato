@@ -83,4 +83,44 @@ public class TmdbModelsTests
         Assert.NotNull(collection);
         Assert.Null(collection!.Parts);
     }
+
+    // TmdbReleaseDatesContainer / TmdbReleaseDateCountry / TmdbReleaseDateItem live in the
+    // root Gelato namespace (GelatoStremioProvider.cs) rather than Gelato.Tmdb — they are
+    // reused rather than duplicated for TmdbClient.GetReleaseDatesAsync. This confirms they
+    // deserialize correctly under TmdbJson.Options' SnakeCaseLower policy, not just under
+    // GelatoStremioProvider's own case-insensitive-only JsonSerializerOptions.
+    [Fact]
+    public void ParsesAReleaseDatesResponseUnderTmdbJsonOptions()
+    {
+        const string json = """
+            {
+              "id": 603,
+              "results": [
+                {
+                  "iso_3166_1": "US",
+                  "release_dates": [
+                    { "release_date": "1999-03-30T00:00:00.000Z", "type": 3, "certification": "R" },
+                    { "release_date": "1999-06-15T00:00:00.000Z", "type": 4, "certification": "R" }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        var container = JsonSerializer.Deserialize<TmdbReleaseDatesContainer>(
+            json,
+            TmdbJson.Options
+        );
+
+        Assert.NotNull(container);
+        var country = Assert.Single(container!.Results!);
+        Assert.Equal("US", country.Iso31661);
+        Assert.Equal(2, country.ReleaseDates!.Count);
+        Assert.Equal(4, country.ReleaseDates[1].Type);
+        Assert.Equal("R", country.ReleaseDates[1].Certification);
+        Assert.Equal(
+            new DateTime(1999, 6, 15, 0, 0, 0, DateTimeKind.Utc),
+            country.ReleaseDates[1].ReleaseDate
+        );
+    }
 }

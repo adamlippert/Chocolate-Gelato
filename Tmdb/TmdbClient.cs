@@ -50,6 +50,21 @@ public sealed class TmdbClient(
     public Task<TmdbMovieDetail?> GetMovieAsync(int movieId, CancellationToken ct) =>
         GetAsync<TmdbMovieDetail>($"movie/{movieId}", $"movie:{movieId}", ct, maxCacheAge: null);
 
+    // Release dates for an already-released film do not change, same reasoning as
+    // GetMovieAsync: no maximum cache age. Deserializes into the TmdbReleaseDatesContainer /
+    // TmdbReleaseDateCountry / TmdbReleaseDateItem types GelatoStremioProvider already defines
+    // for the same TMDB response shape, rather than parallel DTOs.
+    public Task<TmdbReleaseDatesContainer?> GetReleaseDatesAsync(
+        int movieId,
+        CancellationToken ct
+    ) =>
+        GetAsync<TmdbReleaseDatesContainer>(
+            $"movie/{movieId}/release_dates",
+            $"release_dates:{movieId}",
+            ct,
+            maxCacheAge: null
+        );
+
     private async Task<T?> GetAsync<T>(
         string path,
         string cacheKey,
