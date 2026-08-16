@@ -244,7 +244,12 @@ public sealed class CollectionSyncService(
                 user: null,
                 allowRemoteRefresh: false,
                 refreshItem: true,
-                queueRefreshItem: false,
+                // Queued, not fired directly. With queueRefreshItem false, InsertMeta calls
+                // RefreshFullItem unawaited once per created item, each running
+                // GelatoMovieMetadataProvider and so an AIOStreams /meta call — reintroducing
+                // the metadata hop this design removes, at unbounded parallelism, across a
+                // backfill of thousands of titles. Queuing bounds the concurrency.
+                queueRefreshItem: true,
                 ct
             )
             .ConfigureAwait(false);
@@ -264,6 +269,18 @@ public sealed class CollectionSyncService(
         var boxSet = await GetOrCreateBoxSetAsync(row).ConfigureAwait(false);
         if (boxSet is null)
             return;
+
+        // RemoveFromCollectionAsync re-resolves the BoxSet via GetItemById and matches
+        // LinkedChildren by ItemId, which CollectionManagerDecorator never persists — it is
+        // populated in memory only, by GetLinkedChildren(), on whichever instance calls it.
+        // GetItemList returns repository instances and GetItemById returns cached ones, so
+        // read from the same instance the removal will use or the ItemIds land on the wrong
+        // object, nothing matches, and every removal silently no-ops and is retried forever.
+        // Harmless when the two instances already coincide. The non-generic overload is used
+        // because that is what ILibraryManager exposes here and what the rest of the
+        // codebase (CollectionManagerDecorator, PlaylistManagerDecorator) calls.
+        if (libraryManager.GetItemById(boxSet.Id) is BoxSet resolved)
+            boxSet = resolved;
 
         // BoxSet membership is linked children, not parent-child: collection members keep
         // their real library parent, so an InternalItemsQuery on Parent returns nothing and
