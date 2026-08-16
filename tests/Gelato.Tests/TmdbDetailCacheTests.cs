@@ -76,8 +76,57 @@ public class TmdbDetailCacheTests : IDisposable
         var cache = new TmdbDetailCache(_dir);
         cache.Set("movie:603", new TmdbMovieDetail { Id = 603 });
 
-        File.WriteAllText(Directory.GetFiles(_dir)[0], "{ not json");
+        // Filter to *.json: a leaked .tmp file must not make this corrupt the wrong entry.
+        File.WriteAllText(Directory.GetFiles(_dir, "*.json")[0], "{ not json");
 
         Assert.False(cache.TryGet<TmdbMovieDetail>("movie:603", out _));
     }
+
+    [Fact]
+    public void AnEntryWithinMaxAgeIsAHit()
+    {
+        var cache = new TmdbDetailCache(_dir);
+        cache.Set("collection:2344", new TmdbMovieDetail { Id = 2344 });
+
+        Assert.True(
+            cache.TryGet<TmdbMovieDetail>("collection:2344", out var value, TimeSpan.FromDays(1))
+        );
+        Assert.Equal(2344, value!.Id);
+    }
+
+    [Fact]
+    public void AnEntryOlderThanMaxAgeIsAMiss()
+    {
+        // The bug this guards: a franchise collection's `parts` array grows when a sequel
+        // ships, so an indefinitely cached collection would never gain the new film.
+        var cache = new TmdbDetailCache(_dir);
+        cache.Set("collection:2344", new TmdbMovieDetail { Id = 2344 });
+
+        Age(TimeSpan.FromDays(2));
+
+        Assert.False(
+            cache.TryGet<TmdbMovieDetail>("collection:2344", out var value, TimeSpan.FromDays(1))
+        );
+        Assert.Null(value);
+    }
+
+    [Fact]
+    public void NullMaxAgeReturnsAnOldEntry()
+    {
+        // Movie details are read this way: their imdb_id never changes.
+        var cache = new TmdbDetailCache(_dir);
+        cache.Set("movie:603", new TmdbMovieDetail { Id = 603, ImdbId = "tt0133093" });
+
+        Age(TimeSpan.FromDays(400));
+
+        Assert.True(cache.TryGet<TmdbMovieDetail>("movie:603", out var value, maxAge: null));
+        Assert.Equal("tt0133093", value!.ImdbId);
+    }
+
+    /// <summary>
+    /// Backdates the one cached entry. Each test that calls this has written exactly one,
+    /// and the on-disk name is an MD5 of the key that the cache keeps private.
+    /// </summary>
+    private void Age(TimeSpan by) =>
+        File.SetLastWriteTimeUtc(Directory.GetFiles(_dir, "*.json").Single(), DateTime.UtcNow - by);
 }

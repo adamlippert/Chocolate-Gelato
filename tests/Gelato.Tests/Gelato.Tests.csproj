@@ -4,6 +4,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <!--
+      Lets these net9.0-targeted tests run on a machine that has only a .NET 10 runtime
+      installed, which is the common local setup. Inert in CI, which pins the SDK to 9.0.*.
+    -->
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
   <ItemGroup>

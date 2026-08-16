@@ -94,6 +94,17 @@ public class TmdbMetaAdapterTests
     }
 
     [Fact]
+    public void RuntimeStringIsReadableByTheOnlyThingThatConsumesIt()
+    {
+        // The one cross-module string contract in this branch: the adapter emits "136 min"
+        // and Utils.ParseToTicks in Common.cs is its sole consumer. Changing either format
+        // in isolation silently zeroes every imported item's runtime.
+        var meta = TmdbMetaAdapter.ToStremioMeta(Matrix());
+
+        Assert.Equal(TimeSpan.FromMinutes(136).Ticks, Utils.ParseToTicks(meta.Runtime));
+    }
+
+    [Fact]
     public void SurvivesAnAlmostEmptyDetail()
     {
         var meta = TmdbMetaAdapter.ToStremioMeta(new TmdbMovieDetail { Id = 1 });

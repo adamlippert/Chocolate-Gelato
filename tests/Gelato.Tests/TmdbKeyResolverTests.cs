@@ -22,6 +22,14 @@ public class TmdbKeyResolverTests
     }
 
     [Fact]
+    public void SurroundingWhitespaceIsTrimmedOffARealKey()
+    {
+        // The realistic failure in this path: a key pasted with a trailing newline. A dropped
+        // .Trim() would surface only as an undiagnosable 401 from TMDB.
+        Assert.Equal("mine", TmdbKeyResolver.Resolve(" mine\n", () => null));
+    }
+
+    [Fact]
     public void WhitespaceConfiguredKeyIsIgnored()
     {
         var key = TmdbKeyResolver.Resolve("   ", () => "jellyfins");
