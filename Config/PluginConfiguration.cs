@@ -36,6 +36,22 @@ public class PluginConfiguration : BasePluginConfiguration
     /// to anyone who can inspect the client's network traffic.
     /// </summary>
     public bool EnableDirectPlay { get; set; } = false;
+
+    /// <summary>Tracked collections. See docs/superpowers/specs/2026-08-16-catalog-collections-design.md.</summary>
+    public List<CollectionRow> CollectionRows { get; set; } = [];
+
+    /// <summary>
+    /// TMDB API key for collection sync. Falls back to the Jellyfin TMDB plugin's key.
+    /// There is deliberately no hardcoded fallback — without a key the feature stays off.
+    /// </summary>
+    public string TmdbApiKey { get; set; } = "";
+
+    /// <summary>
+    /// Maximum items this feature may create in total. 0 means unlimited. On reaching it,
+    /// sync stops creating new rows, logs the shortfall, and keeps reconciling existing
+    /// membership. Nothing is deleted.
+    /// </summary>
+    public int GlobalItemCeiling { get; set; } = 25000;
     public List<CatalogConfig> Catalogs { get; set; } = [];
     public List<UserConfig> UserConfigs { get; set; } = [];
 
@@ -108,6 +124,9 @@ public class UserConfig
             CreateCollections = baseConfig.CreateCollections,
             MaxCollectionItems = baseConfig.MaxCollectionItems,
             EnableDirectPlay = baseConfig.EnableDirectPlay,
+            CollectionRows = baseConfig.CollectionRows,
+            TmdbApiKey = baseConfig.TmdbApiKey,
+            GlobalItemCeiling = baseConfig.GlobalItemCeiling,
             UserConfigs = baseConfig.UserConfigs,
         };
     }
@@ -149,4 +168,46 @@ public class CatalogConfig
     public int MaxItems { get; set; } = 0;
     public bool CreateCollection { get; set; } = false;
     public string Url { get; set; } = "";
+}
+
+/// <summary>
+/// One tracked collection. Persisted in the plugin's XML configuration, so every
+/// property must be a public settable type the XML serializer can round-trip.
+/// </summary>
+public class CollectionRow
+{
+    /// <summary>Stable identifier for this row, independent of its source id.</summary>
+    public string Id { get; set; } = "";
+
+    /// <summary>BoxSet display name.</summary>
+    public string Name { get; set; } = "";
+
+    public Gelato.Collections.CollectionKind Kind { get; set; } =
+        Gelato.Collections.CollectionKind.Franchise;
+
+    public Gelato.Collections.CollectionMode Mode { get; set; } =
+        Gelato.Collections.CollectionMode.Auto;
+
+    /// <summary>TMDB collection id, watch-provider id, or Stremio catalog id.</summary>
+    public string SourceId { get; set; } = "";
+
+    /// <summary>ISO 3166-1 region. Platform rows only.</summary>
+    public string Region { get; set; } = "";
+
+    /// <summary>0 means unlimited.</summary>
+    public int MaxItems { get; set; }
+
+    /// <summary>
+    /// Refresh floor in days. This never causes a sync — it only suppresses one.
+    /// 0 means "every task run".
+    /// </summary>
+    public int MinIntervalDays { get; set; } = 7;
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Last <em>successful completion</em>. Failed or cancelled runs must not set this.</summary>
+    public DateTime? LastSyncedUtc { get; set; }
+
+    /// <summary>Opaque resume state for a partial backfill. Unused until spec phase 2.</summary>
+    public string Checkpoint { get; set; } = "";
 }
