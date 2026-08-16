@@ -12,46 +12,46 @@ public class CatalogService(GelatoStremioProviderFactory stremioFactory)
 
         if (manifest?.Catalogs == null)
         {
+            // Manifest unreachable — return what is persisted rather than an empty list.
             return config.Catalogs;
         }
 
-        List<CatalogConfig> catalogs = [];
+        // Start from persisted rows so settings for catalogs missing from the current
+        // manifest survive. A catalog vanishing from the manifest is usually transient
+        // (addon disabled, upstream hiccup) and must not destroy the user's config.
+        var merged = config.Catalogs.ToList();
 
-        // Merge manifest catalogs with local config
         foreach (var mCatalog in manifest.Catalogs)
         {
             if (!mCatalog.IsImportable())
                 continue;
 
-            var existing = config.Catalogs.FirstOrDefault(c =>
+            var existing = merged.FirstOrDefault(c =>
                 c.Id == mCatalog.Id && c.Type == mCatalog.Type
             );
-            if (existing == null)
+
+            if (existing is null)
             {
-                existing = new CatalogConfig
-                {
-                    Id = mCatalog.Id,
-                    Type = mCatalog.Type,
-                    Name = mCatalog.Name,
-                    Enabled = false,
-                    MaxItems = 0, // max items to be imported from this catalog
-                    CreateCollection = false,
-                    Url = "",
-                };
+                merged.Add(
+                    new CatalogConfig
+                    {
+                        Id = mCatalog.Id,
+                        Type = mCatalog.Type,
+                        Name = mCatalog.Name,
+                        Enabled = false,
+                        MaxItems = 0,
+                        CreateCollection = false,
+                        Url = "",
+                    }
+                );
             }
             else
             {
-                // Update basic info from manifest just in case
                 existing.Name = mCatalog.Name;
             }
-            catalogs.Add(existing);
         }
-        config.Catalogs = catalogs;
 
-        // Save if we added new ones (optional, but good for persistence)
-        GelatoPlugin.Instance.SaveConfiguration();
-
-        return config.Catalogs;
+        return merged;
     }
 
     public void UpdateCatalogConfig(CatalogConfig updatedConfig)
