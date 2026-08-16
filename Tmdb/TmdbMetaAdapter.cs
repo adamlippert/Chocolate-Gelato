@@ -19,9 +19,10 @@ public static class TmdbMetaAdapter
     {
         ArgumentNullException.ThrowIfNull(detail);
 
-        var id = string.IsNullOrWhiteSpace(detail.ImdbId)
-            ? $"tmdb:{detail.Id.ToString(CultureInfo.InvariantCulture)}"
-            : detail.ImdbId!;
+        // Always TMDB-prefixed, even when an IMDb id is also available, so that
+        // GelatoManager.IntoBaseItem's prefix-match provider-id table sets Tmdb from this
+        // Id and Imdb separately from meta.ImdbId below — both provider ids need to survive.
+        var id = $"tmdb:{detail.Id.ToString(CultureInfo.InvariantCulture)}";
 
         DateTime? released = DateTime.TryParse(
             detail.ReleaseDate,

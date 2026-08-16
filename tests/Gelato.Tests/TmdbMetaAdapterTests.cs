@@ -21,15 +21,16 @@ public class TmdbMetaAdapterTests
         };
 
     [Fact]
-    public void PrefersImdbIdAsTheStremioId()
+    public void AlwaysUsesTmdbPrefixedIdSoBothProviderIdsSurvive()
     {
         var meta = TmdbMetaAdapter.ToStremioMeta(Matrix());
 
-        Assert.Equal("tt0133093", meta.Id);
+        Assert.Equal("tmdb:603", meta.Id);
+        Assert.Equal("tt0133093", meta.ImdbId);
     }
 
     [Fact]
-    public void FallsBackToTmdbPrefixedIdWhenImdbIsMissing()
+    public void UsesTmdbPrefixedIdWhenImdbIsMissing()
     {
         var detail = Matrix();
         detail.ImdbId = null;
@@ -37,6 +38,17 @@ public class TmdbMetaAdapterTests
         var meta = TmdbMetaAdapter.ToStremioMeta(detail);
 
         Assert.Equal("tmdb:603", meta.Id);
+    }
+
+    [Fact]
+    public void LeavesImdbIdNullWhenTmdbSuppliesNone()
+    {
+        var detail = Matrix();
+        detail.ImdbId = null;
+
+        var meta = TmdbMetaAdapter.ToStremioMeta(detail);
+
+        Assert.Null(meta.ImdbId);
     }
 
     [Fact]
