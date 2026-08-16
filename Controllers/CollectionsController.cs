@@ -30,6 +30,12 @@ public class CollectionsController(
         if (string.IsNullOrWhiteSpace(row.Name))
             return BadRequest("Name is required");
 
+        if (!Enum.IsDefined(row.Kind))
+            return BadRequest($"Unknown collection kind: {row.Kind}");
+
+        if (!Enum.IsDefined(row.Mode))
+            return BadRequest($"Unknown collection mode: {row.Mode}");
+
         var cfg = GelatoPlugin.Instance!.Configuration;
 
         if (string.IsNullOrWhiteSpace(row.Id))
@@ -38,6 +44,10 @@ public class CollectionsController(
         var existing = cfg.CollectionRows.FirstOrDefault(r => r.Id == row.Id);
         if (existing is null)
         {
+            // Server-owned state. The sync service writes these; a client must not be able to
+            // seed them, or it can suppress a row's scheduled sync by claiming it just ran.
+            row.LastSyncedUtc = null;
+            row.Checkpoint = "";
             cfg.CollectionRows.Add(row);
         }
         else
