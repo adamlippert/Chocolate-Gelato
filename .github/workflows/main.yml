@@ -19,7 +19,23 @@ jobs:
         with:
           workspace: Gelato.sln
           implicit-restore: true
-  
+
+  # Gelato.sln deliberately contains only Gelato.csproj, so the lint and build jobs above
+  # never see the test project. Run it by explicit path instead of adding it to the solution.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.*"
+
+      - name: Run tests
+        run: dotnet test tests/Gelato.Tests/Gelato.Tests.csproj
+
   conventional-commits:
     runs-on: ubuntu-latest
     steps:

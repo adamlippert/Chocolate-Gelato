@@ -5,6 +5,7 @@ using Gelato.Providers;
 using Gelato.ScheduledTasks;
 using Gelato.Services;
 //using IntroDbPlugin.Services;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Drawing;
@@ -41,6 +42,15 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton(sp => new Lazy<GelatoManager>(sp.GetRequiredService<GelatoManager>));
         services.AddSingleton<CatalogService>();
         services.AddSingleton<CatalogImportService>();
+        services.AddSingleton(sp => new Gelato.Tmdb.TmdbDetailCache(
+            Gelato.Tmdb.TmdbClient.CacheDirectoryFor(sp.GetRequiredService<IApplicationPaths>())
+        ));
+        services.AddSingleton<Gelato.Tmdb.TmdbClient>();
+        services.AddSingleton<Gelato.Collections.Sources.TmdbFranchiseSource>();
+        services.AddSingleton<Gelato.Collections.ICollectionSource>(sp =>
+            sp.GetRequiredService<Gelato.Collections.Sources.TmdbFranchiseSource>()
+        );
+        services.AddSingleton<Gelato.Collections.CollectionSyncService>();
         services.AddSingleton<PalcoCacheService>();
         services.AddSingleton<IHostedService, GelatoJavaScriptRegistrationService>();
         services.AddSingleton<SubtitleProvider>();
@@ -92,10 +102,12 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             .DecorateSingle<IImageProcessor, ImageProcessorDecorator>();
         // Expose the concrete decorator as Lazy so ImageProcessorDecorator can call SaveImageDirect
         // without introducing a circular dependency at construction time.
-        services.AddSingleton(sp => new Lazy<ProviderManagerDecorator>(
-            () => (ProviderManagerDecorator)sp.GetRequiredService<IProviderManager>()));
+        services.AddSingleton(sp => new Lazy<ProviderManagerDecorator>(() =>
+            (ProviderManagerDecorator)sp.GetRequiredService<IProviderManager>()
+        ));
         services.AddSingleton(sp => new Lazy<ILibraryManager>(
-            sp.GetRequiredService<ILibraryManager>));
+            sp.GetRequiredService<ILibraryManager>
+        ));
         services.AddSingleton(sp => new Lazy<ISubtitleManager>(
             sp.GetRequiredService<ISubtitleManager>
         ));

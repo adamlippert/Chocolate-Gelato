@@ -26,6 +26,8 @@
                 style="padding: 0.5em 0; border-bottom: 2px solid #00a4dc; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 1;">General</button>
               <button type="button" class="paper-icon-button-light tab-button" data-tab="catalogs"
                 style="padding: 0.5em 0; border-bottom: 2px solid transparent; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 0.6;">Catalogs</button>
+              <button type="button" class="paper-icon-button-light tab-button" data-tab="collections"
+                style="padding: 0.5em 0; border-bottom: 2px solid transparent; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 0.6;">Collections</button>
               <button type="button" class="paper-icon-button-light tab-button" data-tab="userconfigs"
                 style="padding: 0.5em 0; border-bottom: 2px solid transparent; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 0.6;">User Configs</button>
               <button type="button" class="paper-icon-button-light tab-button" data-tab="advanced"
@@ -179,6 +181,101 @@
             </div>
           </div>
 
+          <!-- Collections Tab -->
+          <div id="tab-collections" class="tab-content" style="display: none;">
+            <div class="verticalSection">
+              <div class="sectionTitleContainer">
+                <h3 class="sectionTitle">Auto-updating collections</h3>
+                <div class="fieldDescription" id="collectionsDisabledNotice"
+                  style="display: none; color: #ff8a80;">
+                  Collection sync is disabled. Add a TMDB API key to enable it.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">
+                  TMDB API key:
+                </label>
+                <input is="emby-input" type="text" id="txtTmdbApiKey" class="emby-input" />
+                <div class="fieldDescription">
+                  Falls back to the Jellyfin TMDB plugin's key. Without either, sync stays off.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtGlobalItemCeiling">
+                  Global item ceiling:
+                </label>
+                <input is="emby-input" type="number" id="txtGlobalItemCeiling"
+                  class="emby-input" />
+                <div class="fieldDescription">
+                  Maximum items this feature may create in total. 0 means unlimited.
+                </div>
+              </div>
+
+              <div class="fieldDescription" style="margin-bottom: 1em;">
+                Only franchise collections are supported today. Platform and catalog-based
+                collections are planned for a later release.
+              </div>
+
+              <div id="collectionRowsList"
+                style="max-height: 600px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; background: rgba(0,0,0,0.2);">
+                <!-- Rows rendered here -->
+              </div>
+
+              <div id="collectionRowForm"
+                style="display:none; margin-top: 1em; padding: 1em; background: rgba(0,0,0,0.1); border-radius: 4px;">
+                <div class="inputContainer">
+                  <label class="inputLabel" for="txtCollectionName">Name:</label>
+                  <input is="emby-input" type="text" id="txtCollectionName" class="emby-input" />
+                </div>
+
+                <div class="inputContainer">
+                  <label class="inputLabel" for="selCollectionMode">Mode:</label>
+                  <select id="selCollectionMode" is="emby-select" class="emby-select">
+                    <option value="Auto">Auto</option>
+                    <option value="Picked">Picked</option>
+                  </select>
+                  <div class="fieldDescription">
+                    Auto discovers the franchise from items you already have. Picked lets you
+                    specify an explicit TMDB collection id.
+                  </div>
+                </div>
+
+                <div class="inputContainer" id="collectionSourceIdContainer">
+                  <label class="inputLabel" for="txtCollectionSourceId">TMDB collection id:</label>
+                  <input is="emby-input" type="text" id="txtCollectionSourceId" class="emby-input" />
+                  <div class="fieldDescription">Numeric TMDB collection id. Required for Picked mode.</div>
+                </div>
+
+                <div class="inputContainer">
+                  <label class="inputLabel" for="txtCollectionMaxItems">Max items:</label>
+                  <input is="emby-input" type="number" id="txtCollectionMaxItems" class="emby-input" />
+                  <div class="fieldDescription">0 means unlimited.</div>
+                </div>
+
+                <div class="inputContainer">
+                  <label class="inputLabel" for="txtCollectionMinInterval">Minimum refresh interval (days):</label>
+                  <input is="emby-input" type="number" id="txtCollectionMinInterval" class="emby-input" />
+                  <div class="fieldDescription">0 means re-check on every scheduled task run.</div>
+                </div>
+
+                <div style="margin-top: 1em;">
+                  <button type="button" id="btnSaveCollectionRow" is="emby-button" class="raised emby-button">Save</button>
+                  <button type="button" id="btnCancelCollectionRow" is="emby-button" class="emby-button"
+                    style="margin-left: 0.5em;">Cancel</button>
+                </div>
+              </div>
+
+              <div style="margin-top: 1.5em; display: flex; justify-content: flex-end;">
+                <button type="button" is="emby-button" class="raised emby-button"
+                  id="btnAddCollectionRow">
+                  <span>Add collection</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Advanced Tab (FFmpeg & Overrides) -->
           <div id="tab-advanced" class="tab-content" style="display: none;">
             <h3 class="sectionTitle">FFmpeg Settings</h3>
@@ -317,6 +414,24 @@
         const txtFFmpegProbeSize = page.querySelector('#txtFFmpegProbeSize');
         const chkEnableJavaScriptInjection = page.querySelector('#chkEnableJavaScriptInjection');
         const chkLazyImages = page.querySelector('#chkLazyImages');
+
+        // Collections
+        const txtTmdbApiKey = page.querySelector('#txtTmdbApiKey');
+        const txtGlobalItemCeiling = page.querySelector('#txtGlobalItemCeiling');
+        const collectionsDisabledNotice = page.querySelector('#collectionsDisabledNotice');
+        const collectionRowsList = page.querySelector('#collectionRowsList');
+        const btnAddCollectionRow = page.querySelector('#btnAddCollectionRow');
+        const collectionRowForm = page.querySelector('#collectionRowForm');
+        const txtCollectionName = page.querySelector('#txtCollectionName');
+        const selCollectionMode = page.querySelector('#selCollectionMode');
+        const collectionSourceIdContainer = page.querySelector('#collectionSourceIdContainer');
+        const txtCollectionSourceId = page.querySelector('#txtCollectionSourceId');
+        const txtCollectionMaxItems = page.querySelector('#txtCollectionMaxItems');
+        const txtCollectionMinInterval = page.querySelector('#txtCollectionMinInterval');
+        const btnSaveCollectionRow = page.querySelector('#btnSaveCollectionRow');
+        const btnCancelCollectionRow = page.querySelector('#btnCancelCollectionRow');
+        let collectionRows = [];
+        let editingCollectionRow = null;
 
         // Catalogs
         const catalogsList = page.querySelector('#catalogsList');
@@ -591,6 +706,325 @@
           }
         }
 
+        // Collections (auto-updating collections)
+
+        function formatLastSynced(value) {
+          if (!value) return 'never';
+          const d = new Date(value);
+          if (isNaN(d.getTime())) return 'never';
+          return d.toLocaleString();
+        }
+
+        // Returns the parsed value, or null after alerting the user. Never silently coerces:
+        // for both fields that use this, 0 is the unbounded setting, so falling back to 0 on a
+        // bad input would turn a typo into the most expensive configuration available.
+        function parseNonNegativeInt(input, label, zeroMeaning) {
+          const raw = ((input && input.value) || '').trim();
+          if (!/^\d+$/.test(raw)) {
+            Dashboard.alert(label + ' must be a whole number, 0 or more. ' + zeroMeaning);
+            return null;
+          }
+          const n = parseInt(raw, 10);
+          if (!Number.isFinite(n)) {
+            Dashboard.alert(label + ' must be a whole number, 0 or more. ' + zeroMeaning);
+            return null;
+          }
+          return n;
+        }
+
+        // ApiClient.ajax rejects with the fetch Response, so the server's own message is one
+        // await away. Worth surfacing: the API rejects rows it cannot service (an unimplemented
+        // kind or mode) with an explanation, and a generic "Error saving" hides exactly the text
+        // the user needs to act on.
+        async function describeRequestError(e, fallback) {
+          try {
+            if (e && typeof e.text === 'function') {
+              const body = ((await e.text()) || '').trim();
+              if (body) return body.slice(0, 500);
+            }
+            if (e && typeof e.responseText === 'string' && e.responseText.trim()) {
+              return e.responseText.trim().slice(0, 500);
+            }
+            if (e && e.status) return fallback + ' (HTTP ' + e.status + ')';
+          } catch (inner) {
+            console.error('Could not read the error response body:', inner);
+          }
+          return fallback;
+        }
+
+        async function loadCollectionRows() {
+          if (!collectionRowsList) return;
+          try {
+            collectionRowsList.innerHTML = '<div style="padding: 1em; text-align: center; opacity: 0.7;">Loading collections...</div>';
+            const rows = await window.ApiClient.getJSON(window.ApiClient.getUrl('gelato/collections'));
+            collectionRows = rows || [];
+            renderCollectionRows();
+          } catch (e) {
+            console.error('Error loading collection rows:', e);
+            collectionRowsList.innerHTML = '<p style="color:red; padding: 1em;">Error loading collections. Check logs.</p>';
+          }
+        }
+
+        function renderCollectionRows() {
+          if (!collectionRowsList) return;
+          collectionRowsList.innerHTML = '';
+
+          if (!collectionRows.length) {
+            collectionRowsList.innerHTML = '<p style="padding: 1em; text-align: center; opacity: 0.7;">No collections yet. Use "Add collection" to create one.</p>';
+            return;
+          }
+
+          const table = document.createElement('table');
+          table.classList.add('table', 'detailTable');
+          table.style.width = '100%';
+          table.style.textAlign = 'left';
+          table.style.borderCollapse = 'collapse';
+
+          const header = document.createElement('tr');
+          header.style.backgroundColor = 'rgba(0,0,0,0.3)';
+          header.innerHTML = `
+                <th style="padding: 10px;">Name</th>
+                <th style="padding: 10px;">Kind</th>
+                <th style="padding: 10px;">Mode</th>
+                <th style="padding: 10px;">Source id</th>
+                <th style="padding: 10px;">Max items</th>
+                <th style="padding: 10px;">Interval (days)</th>
+                <th style="padding: 10px;">Enabled</th>
+                <th style="padding: 10px;">Last synced</th>
+                <th style="padding: 10px;">Actions</th>
+            `;
+          table.appendChild(header);
+
+          collectionRows.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+
+            const nameCell = document.createElement('td');
+            nameCell.style.padding = '10px';
+            nameCell.textContent = row.Name || '';
+            tr.appendChild(nameCell);
+
+            const kindCell = document.createElement('td');
+            kindCell.style.padding = '10px';
+            kindCell.textContent = row.Kind || '';
+            tr.appendChild(kindCell);
+
+            const modeCell = document.createElement('td');
+            modeCell.style.padding = '10px';
+            modeCell.textContent = row.Mode || '';
+            tr.appendChild(modeCell);
+
+            const sourceCell = document.createElement('td');
+            sourceCell.style.padding = '10px';
+            sourceCell.textContent = row.SourceId || '—';
+            tr.appendChild(sourceCell);
+
+            const maxCell = document.createElement('td');
+            maxCell.style.padding = '10px';
+            maxCell.textContent = row.MaxItems > 0 ? String(row.MaxItems) : 'Unlimited';
+            tr.appendChild(maxCell);
+
+            const intervalCell = document.createElement('td');
+            intervalCell.style.padding = '10px';
+            intervalCell.textContent = row.MinIntervalDays > 0 ? String(row.MinIntervalDays) : 'Every run';
+            tr.appendChild(intervalCell);
+
+            const enabledCell = document.createElement('td');
+            enabledCell.style.padding = '10px';
+            const enabledCheck = document.createElement('input');
+            enabledCheck.type = 'checkbox';
+            enabledCheck.is = 'emby-checkbox';
+            enabledCheck.checked = !!row.Enabled;
+            enabledCheck.addEventListener('change', () => toggleCollectionRowEnabled(row, enabledCheck));
+            enabledCell.appendChild(enabledCheck);
+            tr.appendChild(enabledCell);
+
+            const lastSyncedCell = document.createElement('td');
+            lastSyncedCell.style.padding = '10px';
+            lastSyncedCell.textContent = formatLastSynced(row.LastSyncedUtc);
+            tr.appendChild(lastSyncedCell);
+
+            const actionsCell = document.createElement('td');
+            actionsCell.style.padding = '10px';
+            actionsCell.style.whiteSpace = 'nowrap';
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.textContent = 'Edit';
+            editBtn.className = 'emby-button';
+            editBtn.is = 'emby-button';
+            editBtn.style.padding = '0.3em 0.8em';
+            editBtn.addEventListener('click', () => openCollectionRowForm(row));
+            actionsCell.appendChild(editBtn);
+
+            const syncBtn = document.createElement('button');
+            syncBtn.type = 'button';
+            syncBtn.textContent = 'Sync now';
+            syncBtn.className = 'raised emby-button';
+            syncBtn.is = 'emby-button';
+            syncBtn.style.marginLeft = '0.5em';
+            syncBtn.style.padding = '0.3em 0.8em';
+            syncBtn.addEventListener('click', () => syncCollectionRow(row));
+            actionsCell.appendChild(syncBtn);
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.textContent = 'Delete';
+            delBtn.className = 'emby-button';
+            delBtn.is = 'emby-button';
+            delBtn.style.marginLeft = '0.5em';
+            delBtn.style.padding = '0.3em 0.8em';
+            delBtn.addEventListener('click', () => deleteCollectionRow(row));
+            actionsCell.appendChild(delBtn);
+
+            tr.appendChild(actionsCell);
+            table.appendChild(tr);
+          });
+
+          collectionRowsList.appendChild(table);
+        }
+
+        async function saveCollectionRow(row) {
+          const payload = {
+            Id: row.Id || '',
+            Name: row.Name,
+            Kind: 'Franchise',
+            Mode: row.Mode === 'Picked' ? 'Picked' : 'Auto',
+            SourceId: row.SourceId || '',
+            Region: '',
+            MaxItems: row.MaxItems || 0,
+            MinIntervalDays: row.MinIntervalDays != null ? row.MinIntervalDays : 0,
+            Enabled: !!row.Enabled
+          };
+          await window.ApiClient.ajax({
+            type: 'POST',
+            url: window.ApiClient.getUrl('gelato/collections'),
+            data: JSON.stringify(payload),
+            contentType: 'application/json'
+          });
+          await loadCollectionRows();
+        }
+
+        async function toggleCollectionRowEnabled(row, checkbox) {
+          const desired = checkbox.checked;
+          Dashboard.showLoadingMsg();
+          try {
+            await saveCollectionRow(Object.assign({}, row, { Enabled: desired }));
+          } catch (e) {
+            console.error(e);
+            checkbox.checked = !desired;
+            // Same POST as the form, so the same server-side rejections can land here.
+            Dashboard.alert(await describeRequestError(e, 'Error updating collection.'));
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
+        async function syncCollectionRow(row) {
+          Dashboard.showLoadingMsg();
+          try {
+            await window.ApiClient.ajax({
+              type: 'POST',
+              url: window.ApiClient.getUrl('gelato/collections/' + encodeURIComponent(row.Id) + '/sync')
+            });
+            Dashboard.alert('Sync started for "' + (row.Name || 'this collection') + '". It runs in the background and this does not mean it has finished.');
+          } catch (e) {
+            console.error(e);
+            Dashboard.alert('Error starting sync.');
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
+        async function deleteCollectionRow(row) {
+          if (!confirm('Delete "' + (row.Name || 'this collection') + '"? The BoxSet and its items are kept — only tracking is removed.')) return;
+          Dashboard.showLoadingMsg();
+          try {
+            await window.ApiClient.ajax({
+              type: 'DELETE',
+              url: window.ApiClient.getUrl('gelato/collections/' + encodeURIComponent(row.Id))
+            });
+            await loadCollectionRows();
+          } catch (e) {
+            console.error(e);
+            Dashboard.alert('Error deleting collection.');
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
+        function updateCollectionSourceIdVisibility() {
+          if (!selCollectionMode || !collectionSourceIdContainer) return;
+          collectionSourceIdContainer.style.display = selCollectionMode.value === 'Picked' ? 'block' : 'none';
+        }
+
+        function openCollectionRowForm(row) {
+          if (!collectionRowForm) return;
+          editingCollectionRow = row || null;
+          if (txtCollectionName) txtCollectionName.value = row ? (row.Name || '') : '';
+          if (selCollectionMode) selCollectionMode.value = row && row.Mode === 'Picked' ? 'Picked' : 'Auto';
+          if (txtCollectionSourceId) txtCollectionSourceId.value = row ? (row.SourceId || '') : '';
+          if (txtCollectionMaxItems) txtCollectionMaxItems.value = row ? (row.MaxItems || 0) : 0;
+          if (txtCollectionMinInterval) txtCollectionMinInterval.value = row ? (row.MinIntervalDays != null ? row.MinIntervalDays : 7) : 7;
+          updateCollectionSourceIdVisibility();
+          collectionRowForm.style.display = 'block';
+        }
+
+        function closeCollectionRowForm() {
+          if (!collectionRowForm) return;
+          editingCollectionRow = null;
+          collectionRowForm.style.display = 'none';
+        }
+
+        async function submitCollectionRowForm() {
+          if (!txtCollectionName || !selCollectionMode) return;
+          const name = (txtCollectionName.value || '').trim();
+          if (!name) {
+            Dashboard.alert('Name is required.');
+            return;
+          }
+
+          const mode = selCollectionMode.value === 'Picked' ? 'Picked' : 'Auto';
+          let sourceId = '';
+          if (mode === 'Picked') {
+            sourceId = ((txtCollectionSourceId && txtCollectionSourceId.value) || '').trim();
+            if (!sourceId || !/^\d+$/.test(sourceId)) {
+              Dashboard.alert('Source id must be a numeric TMDB collection id for Picked mode.');
+              return;
+            }
+          }
+
+          // Coercing a bad value to 0 would be the worst possible default: MaxItems 0 means
+          // unlimited and MinIntervalDays 0 means "sync on every run", so a typo would silently
+          // buy the user the most expensive setting there is. Reject instead.
+          const maxItems = parseNonNegativeInt(txtCollectionMaxItems, 'Max items', 'Use 0 for unlimited.');
+          if (maxItems === null) return;
+
+          const minInterval = parseNonNegativeInt(txtCollectionMinInterval, 'Minimum refresh interval (days)', 'Use 0 to sync on every run.');
+          if (minInterval === null) return;
+
+          const payload = {
+            Id: editingCollectionRow ? editingCollectionRow.Id : '',
+            Name: name,
+            Mode: mode,
+            SourceId: sourceId,
+            MaxItems: maxItems,
+            MinIntervalDays: minInterval,
+            Enabled: editingCollectionRow ? !!editingCollectionRow.Enabled : true
+          };
+
+          Dashboard.showLoadingMsg();
+          try {
+            await saveCollectionRow(payload);
+            closeCollectionRowForm();
+          } catch (e) {
+            console.error(e);
+            Dashboard.alert(await describeRequestError(e, 'Error saving collection.'));
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
         async function loadConfig() {
           Dashboard.showLoadingMsg();
           try {
@@ -612,6 +1046,24 @@
             if (txtFFmpegProbeSize) txtFFmpegProbeSize.value = cfg.FFmpegProbeSize || "25M";
             if (chkEnableJavaScriptInjection) chkEnableJavaScriptInjection.checked = cfg.EnableJavaScriptInjection || false;
             if (chkLazyImages) chkLazyImages.checked = cfg.LazyImages ?? false;
+
+            if (txtTmdbApiKey) txtTmdbApiKey.value = cfg.TmdbApiKey || "";
+            if (txtGlobalItemCeiling) txtGlobalItemCeiling.value = cfg.GlobalItemCeiling ?? 25000;
+
+            // Collections: reflect whether sync has an API key to work with. Otherwise this
+            // state is silent and baffling — the tab just does nothing on task run.
+            if (collectionsDisabledNotice) {
+              try {
+                const status = await window.ApiClient.getJSON(
+                  window.ApiClient.getUrl('gelato/collections/status')
+                );
+                collectionsDisabledNotice.style.display = status.Enabled ? 'none' : 'block';
+              } catch (e) {
+                console.error(e);
+              }
+            }
+
+            await loadCollectionRows();
 
             // User Overrides Logic
             await loadUsers();
@@ -648,6 +1100,15 @@
             cfg.FFmpegProbeSize = txtFFmpegProbeSize.value;
             cfg.EnableJavaScriptInjection = chkEnableJavaScriptInjection.checked;
             cfg.LazyImages = chkLazyImages.checked;
+
+            cfg.TmdbApiKey = txtTmdbApiKey.value.trim();
+            cfg.GlobalItemCeiling = parseInt(txtGlobalItemCeiling.value) || 0;
+            // Collection rows are owned by the gelato/collections controller, not this config
+            // blob. Writing cfg.CollectionRows here would race with that controller and could
+            // clobber rows added concurrently or resurrect ones just deleted, so it is
+            // deliberately left untouched — getPluginConfiguration above already carries
+            // whatever CollectionRows the server currently has, and updatePluginConfiguration
+            // below sends that same value straight back.
 
             // Only collect catalog states if catalogs have been loaded (i.e., if we're on catalogs tab or it was loaded)
             if (allCatalogs.length > 0) {
@@ -805,6 +1266,11 @@
           btnRefreshCatalogs.addEventListener('click', loadCatalogs);
           page.querySelector('#btnImportAll').addEventListener('click', triggerImportAll);
           selUserConfig.addEventListener('change', onUserSelected);
+
+          if (btnAddCollectionRow) btnAddCollectionRow.addEventListener('click', () => openCollectionRowForm(null));
+          if (btnCancelCollectionRow) btnCancelCollectionRow.addEventListener('click', closeCollectionRowForm);
+          if (btnSaveCollectionRow) btnSaveCollectionRow.addEventListener('click', submitCollectionRowForm);
+          if (selCollectionMode) selCollectionMode.addEventListener('change', updateCollectionSourceIdVisibility);
 
           // Tab 1 active by default
           const startTab = page.querySelector('.tab-button[data-tab="general"]');
