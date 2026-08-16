@@ -1,18 +1,26 @@
 using Gelato.Collections;
 using Gelato.Config;
 using Gelato.Tmdb;
+using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
 namespace Gelato.Controllers;
 
+/// <summary>
+/// Every endpoint here writes server-wide plugin configuration or starts unbounded background
+/// work against TMDB and AIOStreams, so a bare <c>[Authorize]</c> is not enough — that would
+/// let any account with a login mutate the whole server's collection rows. The other Gelato
+/// controllers are read-and-trigger surfaces and are not comparable precedent.
+/// </summary>
 [ApiController]
 [Route("gelato/collections")]
-[Authorize]
+[Authorize(Policy = Policies.RequiresElevation)]
 public class CollectionsController(
     ILogger<CollectionsController> logger,
     CollectionSyncService syncService,
+    IEnumerable<ICollectionSource> sources,
     TmdbClient tmdb
 ) : ControllerBase
 {
@@ -35,6 +43,27 @@ public class CollectionsController(
 
         if (!Enum.IsDefined(row.Mode))
             return BadRequest($"Unknown collection mode: {row.Mode}");
+
+        // A defined enum value is not the same as an implemented one. Platform and Catalog
+        // are declared for phase 2 and have no ICollectionSource, so a row using one would be
+        // accepted, saved, and then fail on every scheduled run forever with nothing in the UI
+        // to explain it. Validate against what is actually registered instead.
+        if (!sources.Any(s => s.Kind == row.Kind))
+        {
+            var available = string.Join(", ", sources.Select(s => s.Kind.ToString()).Distinct());
+            return BadRequest(
+                $"Collection kind {row.Kind} is not implemented yet. Available: {available}."
+            );
+        }
+
+        // Same reasoning, one level down: TmdbFranchiseSource throws on All, which needs the
+        // TMDB daily ID export path (spec phase 2).
+        if (row.Mode == CollectionMode.All)
+        {
+            return BadRequest(
+                "Mode 'All' is not implemented yet. Use 'Auto' (from your library) or 'Picked'."
+            );
+        }
 
         var cfg = GelatoPlugin.Instance!.Configuration;
 
