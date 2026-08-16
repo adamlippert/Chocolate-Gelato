@@ -18,10 +18,12 @@ namespace Gelato.Collections.Sources;
 /// Each discovered franchise is tagged with its own <see cref="TitleRef.GroupKey"/> so the
 /// sync service gives it its own BoxSet — one row named "Franchises" yields "The Matrix
 /// Collection", "Alien Collection" and so on, not one box of everything.
-/// Known blind spot: this only sees library movies that carry a TMDB provider id. Items
-/// created by earlier Gelato features (catalog import, search) generally carry only an
-/// IMDb id and no TMDB id, so on an existing installation Auto mode will be blind to most
-/// of the library until those items are backfilled with TMDB ids.</para>
+/// This only sees library movies that carry a TMDB provider id. That was expected to be a
+/// severe limitation, on the assumption that items created by earlier Gelato features carry
+/// only an IMDb id — but measurement against a live 1,626-movie library found 99% do carry a
+/// TMDB id, because Jellyfin's own TMDb metadata provider enriches them. See
+/// docs/superpowers/spikes/2026-08-16-tmdb-provider-and-numbering.md. The gap is real but
+/// small; it only bites where that provider is disabled for the library.</para>
 /// <para><b>All</b> is spec phase 2 and throws here.</para>
 /// </summary>
 public sealed class TmdbFranchiseSource(
@@ -122,12 +124,14 @@ public sealed class TmdbFranchiseSource(
     {
         // Every movie in the library that carries a TMDB id, excluding stream rows.
         //
-        // Known blind spot: items created by earlier Gelato features (catalog import,
-        // search) generally carry only an IMDb id and no TMDB id, since Stremio/AIOStreams
-        // metadata is IMDb-keyed. GetProviderId(MetadataProvider.Tmdb) will be empty for
-        // most of those, so Auto mode is effectively blind to most of an existing
-        // installation's library until those items are backfilled with TMDB ids. This is a
-        // real limitation, not a bug — see the class doc.
+        // Items reach here with a TMDB id even though Stremio/AIOStreams metadata is
+        // IMDb-keyed, because Jellyfin's own TMDb provider enriches them — measured at 99%
+        // of a live 1,626-movie library, with a third also carrying TmdbCollection, a key
+        // this plugin never sets. Only libraries with that provider disabled see a real gap.
+        //
+        // Optimisation available: for items that already carry TmdbCollection, Jellyfin has
+        // already resolved the franchise, so the GetMovieAsync call below is redundant.
+        // See docs/superpowers/spikes/2026-08-16-tmdb-provider-and-numbering.md.
         var movies = libraryManager
             .GetItemList(
                 new InternalItemsQuery

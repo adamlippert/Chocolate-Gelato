@@ -44,7 +44,7 @@ The second decides whether series can use TMDB at all in a later phase.
 
 | Item | Why it was left |
 |---|---|
-| **A backfill still reaches the shared hardcoded TMDB key ~2× per title.** `InsertMeta` → `EnrichMetaAsync` → `GetTmdbApiKey()` uses the community key at `GelatoStremioProvider.cs:205`, and the queued refresh adds one AIOStreams `/meta` call per title. A 5,800-title row costs roughly 11,600 shared-key requests. | The fix interacts with an unresolved question about whether Jellyfin's TMDB provider populates these items, which needs a server. **Do not enable a large row until this is addressed.** |
+| **A backfill still reaches the shared hardcoded TMDB key ~2× per title.** `InsertMeta` → `EnrichMetaAsync` → `GetTmdbApiKey()` uses the community key at `GelatoStremioProvider.cs:205`, and the queued refresh adds one AIOStreams `/meta` call per title. A 5,800-title row costs roughly 11,600 shared-key requests. | **No longer blocked.** The spike that gated it is answered: Jellyfin's TMDb provider *does* enrich these items, so the queued refresh is redundant for metadata and can be dropped. Still unfixed — **do not enable a large row until it is** — but the fix is now clear rather than speculative. |
 | **`MaxItems > 0` on an Auto row truncates mid-franchise.** The cap applies to the flat title list before grouping, so the boundary franchise reconciles against a partial member list and franchises past the cap are left stale. | Requires a non-default setting; `MaxItems` defaults to 0 (unlimited). The row-wide cap is the recorded design decision. |
 | **A row rename overrides a manual BoxSet rename** on every sync. | Inherent to "the row's name is authoritative". |
 | **`UpsertRow` accepts a client-supplied row `Id`.** An id containing a `.` could collide with the group-key separator and make two rows share a BoxSet. | Elevated-only and requires deliberate action. A `Guid.TryParseExact` check would close it. |
@@ -52,7 +52,7 @@ The second decides whether series can use TMDB at all in a later phase.
 | **`PurgeGelatoTask` sweeps BoxSets by any `Stremio` provider id**, so collection BoxSets are in its blast radius. | Pre-existing; self-healing, since the next sync recreates them. |
 | **`CountFeatureItems` counts every non-stream Gelato movie**, not only items this feature created, so the global ceiling is conservative. Spec §6.1 still describes the intent rather than the behaviour. | Direction is safe. The code comment records the divergence. |
 | **`RowGates` semaphores are never pruned or disposed.** | Bounded by the config file. |
-| **Auto mode is blind to library items with no TMDB provider id** — which is most items created by older Gelato paths. | Documented in the source and in spec §4.1. Needs a `/find`-based fallback to fix properly. |
+| ~~**Auto mode is blind to library items with no TMDB provider id**~~ — **measured and largely false.** 99% of a live 1,626-movie Gelato library carry one, because Jellyfin's TMDb provider enriches them. | Corrected in the source and spec. Only affects libraries with that provider disabled. See [spike findings](../spikes/2026-08-16-tmdb-provider-and-numbering.md). |
 
 ---
 

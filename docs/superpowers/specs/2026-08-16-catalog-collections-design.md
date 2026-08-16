@@ -91,11 +91,18 @@ Collection" this document promises, and Auto is the default mode. So:
 - `MaxItems` still applies across the row as a whole, not per group: it bounds how much work one
   config entry can cause, and the user did not choose the group count.
 
-**Auto mode's blind spot.** Discovery reads `belongs_to_collection` from library movies that
-carry a TMDB provider id. Items created by earlier Gelato features (catalog import, search)
-generally carry only an IMDb id, because Stremio/AIOStreams metadata is IMDb-keyed. On an
-existing installation Auto mode is therefore blind to most of the library until those items are
-backfilled with TMDB ids. This is a known limitation of the design, not a defect in it.
+**Auto mode's coverage.** Discovery reads `belongs_to_collection` from library movies that carry
+a TMDB provider id. This was expected to be a severe limitation, on the reasoning that
+Stremio/AIOStreams metadata is IMDb-keyed so Gelato items would lack a TMDB id.
+
+**Measurement contradicted that.** On a live 1,626-movie library, 99% of Gelato items carry a
+TMDB provider id and 33% additionally carry `TmdbCollection` — a key this plugin never sets —
+because Jellyfin's own TMDb metadata provider enriches items with `gelato://stub/...` paths. The
+gap is real only where that provider is disabled for the library. See
+[the spike findings](../spikes/2026-08-16-tmdb-provider-and-numbering.md).
+
+That measurement also makes an optimisation available: where `TmdbCollection` is already present,
+the franchise is known and the per-movie TMDB detail call is redundant.
 
 | Implementation | Enumeration |
 |---|---|
