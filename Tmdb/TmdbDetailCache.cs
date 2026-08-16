@@ -48,7 +48,12 @@ public sealed class TmdbDetailCache(string cacheDirectory)
 
         try
         {
-            File.WriteAllText(PathFor(key), JsonSerializer.Serialize(value, TmdbJson.Options));
+            var path = PathFor(key);
+            // Same directory, so same volume — File.Move is atomic here. Writing in place
+            // is not, and concurrent callers for one key would otherwise tear the file.
+            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(value, TmdbJson.Options));
+            File.Move(tmp, path, overwrite: true);
         }
         catch
         {

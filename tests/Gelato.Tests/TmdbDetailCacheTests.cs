@@ -49,11 +49,25 @@ public class TmdbDetailCacheTests : IDisposable
     [Fact]
     public void KeysWithPathSeparatorsDoNotEscapeTheDirectory()
     {
-        var cache = new TmdbDetailCache(_dir);
-        cache.Set("../../etc/passwd", new TmdbMovieDetail { Id = 1 });
+        var root = Path.Combine(Path.GetTempPath(), "gelato-root-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = Path.Combine(root, "cache");
+        try
+        {
+            var cache = new TmdbDetailCache(cacheDir);
+            cache.Set("../../etc/passwd", new TmdbMovieDetail { Id = 1 });
 
-        Assert.True(cache.TryGet<TmdbMovieDetail>("../../etc/passwd", out _));
-        Assert.All(Directory.GetFiles(_dir), f => Assert.Equal(_dir, Path.GetDirectoryName(f)));
+            Assert.True(cache.TryGet<TmdbMovieDetail>("../../etc/passwd", out _));
+
+            // Recursive from the PARENT: an escaped write would land here and be seen.
+            var all = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+            Assert.NotEmpty(all);
+            Assert.All(all, f => Assert.Equal(cacheDir, Path.GetDirectoryName(f)));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
