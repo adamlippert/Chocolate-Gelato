@@ -15,6 +15,9 @@ namespace Gelato.Collections.Sources;
 /// <para><b>Picked</b> — one TMDB collection, named by <see cref="CollectionRow.SourceId"/>.</para>
 /// <para><b>Auto</b> — every franchise implied by movies already in the library, found via
 /// each movie's <c>belongs_to_collection</c>. Bounded by the library rather than by TMDB.
+/// Each discovered franchise is tagged with its own <see cref="TitleRef.GroupKey"/> so the
+/// sync service gives it its own BoxSet — one row named "Franchises" yields "The Matrix
+/// Collection", "Alien Collection" and so on, not one box of everything.
 /// Known blind spot: this only sees library movies that carry a TMDB provider id. Items
 /// created by earlier Gelato features (catalog import, search) generally carry only an
 /// IMDb id and no TMDB id, so on an existing installation Auto mode will be blind to most
@@ -71,8 +74,18 @@ public sealed class TmdbFranchiseSource(
             yield break;
         }
 
-        var collection = await tmdb.GetCollectionAsync(collectionId, ct).ConfigureAwait(false);
-        if (collection?.Parts is null)
+        // A failed fetch is not an empty collection. TmdbClient returns null for every
+        // failure it cannot retry past — no key, 401 on a rotated key, exhausted retries —
+        // and swallowing that here would hand the sync service an empty desired list, which
+        // it would faithfully reconcile by emptying the BoxSet. Throw instead: SyncAllAsync
+        // catches per row, logs, and moves on without advancing LastSyncedUtc.
+        var collection =
+            await tmdb.GetCollectionAsync(collectionId, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                $"TMDB collection {collectionId} could not be fetched"
+            );
+
+        if (collection.Parts is null)
         {
             log.LogWarning("TMDB collection {Id} returned no parts", collectionId);
             yield break;
@@ -84,7 +97,19 @@ public sealed class TmdbFranchiseSource(
 
             // The collection response carries no imdb_id, so fetch the detail. This is
             // the expensive call in a backfill and the reason TmdbDetailCache exists.
+            //
+            // A null detail must NOT drop the part. The part is in the collection either
+            // way; all a failed detail lookup costs us is the IMDb id, and dropping the
+            // title instead would silently remove an existing member of the BoxSet.
+            // Downstream, FindExisting handles a null ImdbId by matching on TMDB alone.
             var detail = await tmdb.GetMovieAsync(part.Id, ct).ConfigureAwait(false);
+            if (detail is null)
+            {
+                log.LogDebug(
+                    "No TMDB detail for {TmdbId}; keeping it as a member without an IMDb id",
+                    part.Id
+                );
+            }
 
             yield return new TitleRef(part.Id, detail?.ImdbId, TitleMediaType.Movie);
         }
@@ -134,16 +159,54 @@ public sealed class TmdbFranchiseSource(
         {
             ct.ThrowIfCancellationRequested();
 
+            // A seed movie is a discovery input, not a member: if its detail cannot be
+            // fetched we simply do not learn about whatever franchise it belongs to. Skip
+            // quietly — failing the whole row over one unreadable seed would be worse.
             var detail = await tmdb.GetMovieAsync(tmdbId, ct).ConfigureAwait(false);
-            if (detail?.BelongsToCollection is not { } belongs)
+            if (detail is null)
+            {
+                log.LogDebug(
+                    "No TMDB detail for library movie {TmdbId}; skipping as a seed",
+                    tmdbId
+                );
+                continue;
+            }
+
+            if (detail.BelongsToCollection is not { } belongs)
                 continue;
 
             if (!seenCollections.Add(belongs.Id))
                 continue;
 
+            // Unlike Picked mode this does not throw. One unreachable franchise out of
+            // dozens should not fail the row: its BoxSet is simply not reconciled this run
+            // and keeps whatever members it already has.
             var collection = await tmdb.GetCollectionAsync(belongs.Id, ct).ConfigureAwait(false);
-            if (collection?.Parts is null)
+            if (collection is null)
+            {
+                log.LogWarning(
+                    "TMDB collection {Id} could not be fetched; leaving that franchise untouched this run",
+                    belongs.Id
+                );
                 continue;
+            }
+
+            if (collection.Parts is null)
+                continue;
+
+            // Each discovered franchise becomes its own BoxSet. Without a usable name there
+            // is nothing sensible to call it, so skip rather than invent one.
+            var groupName = CollectionGrouping.ResolveGroupName(belongs.Name, collection.Name);
+            if (groupName is null)
+            {
+                log.LogWarning(
+                    "TMDB collection {Id} has no usable name; skipping that franchise",
+                    belongs.Id
+                );
+                continue;
+            }
+
+            var groupKey = CollectionGrouping.GroupKeyFor(belongs.Id);
 
             foreach (var part in collection.Parts)
             {
@@ -152,8 +215,15 @@ public sealed class TmdbFranchiseSource(
                 if (!emitted.Add(part.Id))
                     continue;
 
+                // As in Picked mode, a null detail costs the IMDb id and nothing else.
                 var partDetail = await tmdb.GetMovieAsync(part.Id, ct).ConfigureAwait(false);
-                yield return new TitleRef(part.Id, partDetail?.ImdbId, TitleMediaType.Movie);
+                yield return new TitleRef(
+                    part.Id,
+                    partDetail?.ImdbId,
+                    TitleMediaType.Movie,
+                    groupKey,
+                    groupName
+                );
             }
         }
     }

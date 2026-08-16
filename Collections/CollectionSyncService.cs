@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using Gelato.Config;
 using Gelato.Tmdb;
@@ -40,6 +41,23 @@ public sealed class CollectionSyncService(
     /// variant of them.</para>
     /// </summary>
     private static PluginConfiguration Config => GelatoPlugin.Instance!.Configuration;
+
+    /// <summary>
+    /// One gate per row id, so two overlapping runs of the same row cannot interleave.
+    ///
+    /// <para>The scheduled task and the settings page's "Sync now" button reach the same rows
+    /// by different paths, and manual runs bypass the refresh floor entirely. Two concurrent
+    /// runs of one row would each snapshot the global item budget independently — so between
+    /// them they can create twice the ceiling — and both would write
+    /// <c>LastSyncedUtc</c>.</para>
+    ///
+    /// <para>Static because the service is resolved per scope; keyed by row id, never pruned.
+    /// Rows are a handful of configuration entries with stable ids, so the dictionary is
+    /// bounded by the config file, not by traffic.</para>
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> RowGates = new(
+        StringComparer.Ordinal
+    );
 
     public async Task SyncAllAsync(
         CancellationToken ct,
@@ -89,6 +107,32 @@ public sealed class CollectionSyncService(
     {
         ArgumentNullException.ThrowIfNull(row);
 
+        var gate = RowGates.GetOrAdd(row.Id ?? string.Empty, _ => new SemaphoreSlim(1, 1));
+
+        // Zero timeout: a second run of the same row is skipped, not queued. Queuing would
+        // only guarantee that the duplicate work happens eventually, which is the thing worth
+        // avoiding — the first run's result is the one the user asked for.
+        if (!await gate.WaitAsync(0, ct).ConfigureAwait(false))
+        {
+            log.LogWarning(
+                "Collection {Name} is already syncing; skipping this run to avoid a concurrent pass",
+                row.Name
+            );
+            return false;
+        }
+
+        try
+        {
+            return await SyncRowCoreAsync(row, ct, manual).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<bool> SyncRowCoreAsync(CollectionRow row, CancellationToken ct, bool manual)
+    {
         // The floor suppresses syncs; it never causes one.
         if (!SyncSchedule.IsDue(row.LastSyncedUtc, row.MinIntervalDays, DateTime.UtcNow, manual))
         {
@@ -97,6 +141,20 @@ public sealed class CollectionSyncService(
                 row.Name,
                 row.LastSyncedUtc,
                 row.MinIntervalDays
+            );
+            return false;
+        }
+
+        // Spec §6.2: without a TMDB key the feature stays disabled. Enforced here and not
+        // merely on the settings page, because every source shipped today is TMDB-backed and
+        // a keyless TmdbClient returns null from every call — which, left unchecked, reads
+        // downstream as "this collection is empty now" and empties the BoxSet. Returning
+        // early leaves LastSyncedUtc untouched, so the row runs the moment a key appears.
+        if (!tmdb.IsEnabled)
+        {
+            log.LogWarning(
+                "Collection {Name} skipped: no TMDB API key is configured, so the source cannot be read",
+                row.Name
             );
             return false;
         }
@@ -112,14 +170,20 @@ public sealed class CollectionSyncService(
         var rowLimit = CapPolicy.RowLimit(row.MaxItems);
         var budget = CapPolicy.RemainingBudget(cfg.GlobalItemCeiling, CountFeatureItems());
 
-        var desired = new List<Guid>();
+        // One entry per resolved title, carrying the group it belongs to. Grouping is what
+        // turns a franchise Auto row into one BoxSet per franchise rather than a single box
+        // of every film it discovered.
+        var resolved = new List<(Guid ItemId, string? GroupKey, string? GroupName)>();
         var skippedForBudget = 0;
 
         await foreach (var titleRef in source.EnumerateAsync(row, ct).ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
 
-            if (desired.Count >= rowLimit)
+            // The row cap applies across the row as a whole, not per group: it exists to
+            // bound how much work one config entry can cause, and the group count is not
+            // something the user chose.
+            if (resolved.Count >= rowLimit)
                 break;
 
             var item = FindExisting(titleRef);
@@ -139,34 +203,109 @@ public sealed class CollectionSyncService(
                 budget--;
             }
 
-            desired.Add(item.Id);
+            resolved.Add((item.Id, titleRef.GroupKey, titleRef.GroupName));
         }
 
         if (skippedForBudget > 0)
         {
             log.LogWarning(
-                "Collection {Name}: {Count} titles not created — global item ceiling {Ceiling} reached",
+                "Collection {Name}: {Count} titles not created — the global item ceiling {Ceiling} "
+                    + "was reached, measured against every non-stream movie under the Gelato movie "
+                    + "folder (a deliberate over-count; see CountFeatureItems)",
                 row.Name,
                 skippedForBudget,
                 cfg.GlobalItemCeiling
             );
         }
 
-        await ReconcileAsync(row, desired, ct).ConfigureAwait(false);
+        // Safety net. Sources are hardened to throw rather than truncate, but a source that
+        // yields nothing at all while the row's BoxSets still hold members is overwhelmingly
+        // more likely to be a failure than a franchise that genuinely lost every film. The
+        // destructive reading is unrecoverable in practice — the run would empty the BoxSet
+        // and then advance the refresh floor, keeping it empty for a week — so refuse it and
+        // leave the row due. A user who really did mean to empty it can delete the row.
+        if (resolved.Count == 0)
+        {
+            var existingMembers = CountRowBoxSetMembers(row);
+
+            if (CollectionSafety.ShouldSkipEmptyReconcile(0, existingMembers))
+            {
+                log.LogError(
+                    "Collection {Name}: the source returned no titles while {Count} members are already "
+                        + "in place. Treating this as a source failure and leaving the collection "
+                        + "untouched rather than emptying it. Delete the row if it should really be empty.",
+                    row.Name,
+                    existingMembers
+                );
+                return false;
+            }
+        }
+
+        var totalMembers = 0;
+
+        foreach (
+            var group in resolved.GroupBy(r => r.GroupKey ?? string.Empty, StringComparer.Ordinal)
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var groupKey = group.Key.Length == 0 ? null : group.Key;
+            var groupName = group.Select(g => g.GroupName).FirstOrDefault(n => n is not null);
+
+            var members = group.Select(g => g.ItemId).ToList();
+            totalMembers += members.Count;
+
+            await ReconcileAsync(
+                    row,
+                    CollectionGrouping.ProviderId(row.Id, groupKey),
+                    CollectionGrouping.BoxSetName(row.Name, groupKey, groupName),
+                    members,
+                    ct
+                )
+                .ConfigureAwait(false);
+        }
 
         // Only a completed run advances the clock. A cancelled or failed run throws before
-        // reaching here, so the row stays due. Nothing below may be moved above this point.
+        // reaching here, and the safety net above returns before reaching here, so the row
+        // stays due. Nothing below may be moved above this point.
         row.LastSyncedUtc = DateTime.UtcNow;
 
-        log.LogInformation("Collection {Name} synced: {Count} members", row.Name, desired.Count);
+        log.LogInformation("Collection {Name} synced: {Count} members", row.Name, totalMembers);
 
         return true;
     }
 
     /// <summary>
-    /// How many item rows exist under the Gelato movie folder, excluding per-stream rows.
-    /// Stream rows are created by <c>SyncStreams</c> on playback, not by this feature, so
-    /// counting them would exhaust the ceiling for the wrong reason.
+    /// How many members the BoxSets owned by this row currently hold, across the row's own
+    /// BoxSet and any per-group BoxSets it has created. Used only by the empty-source safety
+    /// net, so it runs at most once per row per sync.
+    /// </summary>
+    private int CountRowBoxSetMembers(CollectionRow row) =>
+        libraryManager
+            .GetItemList(
+                new InternalItemsQuery
+                {
+                    IncludeItemTypes = [BaseItemKind.BoxSet],
+                    CollapseBoxSetItems = false,
+                    Recursive = true,
+                    IsDeadPerson = true, // skip filter marker
+                }
+            )
+            .OfType<BoxSet>()
+            .Where(b => CollectionGrouping.OwnedByRow(b.GetProviderId("Stremio"), row.Id))
+            .Sum(b => b.GetLinkedChildren().Count);
+
+    /// <summary>
+    /// Every non-stream movie under the Gelato movie folder.
+    ///
+    /// <para>This is <em>not</em> a count of items this feature created, which is what the
+    /// global ceiling nominally bounds (spec §6.1). Items imported by catalog import or added
+    /// by search are indistinguishable from collection members at this level — nothing marks
+    /// provenance — so they are counted too and the ceiling is reached sooner than it strictly
+    /// should be. That over-count is deliberate: the ceiling exists to bound how large this
+    /// feature can grow the database, and erring toward stopping early is the safe direction.
+    /// Per-stream rows are excluded because <c>SyncStreams</c> creates them on playback, one
+    /// per available stream, which would exhaust the ceiling for an unrelated reason.</para>
     /// </summary>
     private int CountFeatureItems()
     {
@@ -262,11 +401,17 @@ public sealed class CollectionSyncService(
     /// thousand members the difference matters. Items dropped from the source lose their
     /// membership only; their library rows survive (spec §3, the library is an archive).
     /// </summary>
-    private async Task ReconcileAsync(CollectionRow row, List<Guid> desired, CancellationToken ct)
+    private async Task ReconcileAsync(
+        CollectionRow row,
+        string providerId,
+        string boxSetName,
+        List<Guid> desired,
+        CancellationToken ct
+    )
     {
         ct.ThrowIfCancellationRequested();
 
-        var boxSet = await GetOrCreateBoxSetAsync(row).ConfigureAwait(false);
+        var boxSet = await GetOrCreateBoxSetAsync(providerId, boxSetName).ConfigureAwait(false);
         if (boxSet is null)
             return;
 
@@ -294,6 +439,27 @@ public sealed class CollectionSyncService(
             await collectionManager
                 .RemoveFromCollectionAsync(boxSet.Id, delta.ToRemove)
                 .ConfigureAwait(false);
+
+            // Removal depends on GetItemById and GetItemList agreeing on which instance holds
+            // LinkedChildren (see the note above). Whether they do cannot be settled without a
+            // running server, so verify the outcome instead of assuming it: if the membership
+            // did not shrink, every removal silently no-opped and will be retried forever.
+            var after = boxSet.GetLinkedChildren().Count;
+            var expected = current.Count - delta.ToRemove.Count;
+
+            if (after > expected)
+            {
+                log.LogWarning(
+                    "Collection {BoxSet}: asked to remove {Removed} members but membership went "
+                        + "from {Before} to {After} (expected {Expected}). Removals are not taking "
+                        + "effect — the BoxSet instance being read is probably not the one being written.",
+                    boxSetName,
+                    delta.ToRemove.Count,
+                    current.Count,
+                    after,
+                    expected
+                );
+            }
         }
 
         if (delta.ToAdd.Count > 0)
@@ -304,21 +470,21 @@ public sealed class CollectionSyncService(
         }
 
         log.LogInformation(
-            "Collection {Name}: +{Added} -{Removed}",
+            "Collection {Name} / {BoxSet}: +{Added} -{Removed}",
             row.Name,
+            boxSetName,
             delta.ToAdd.Count,
             delta.ToRemove.Count
         );
     }
 
     /// <summary>
-    /// The BoxSet is keyed by the row's stable id, not its name, so renaming a row does not
-    /// orphan its collection.
+    /// The BoxSet is keyed by a stable provider id derived from the row id (and, for a
+    /// grouped row, the group key), not by its name, so renaming a row or a franchise does
+    /// not orphan its collection.
     /// </summary>
-    private async Task<BoxSet?> GetOrCreateBoxSetAsync(CollectionRow row)
+    private async Task<BoxSet?> GetOrCreateBoxSetAsync(string providerId, string name)
     {
-        var providerId = $"gelato-collection.{row.Id}";
-
         var existing = libraryManager
             .GetItemList(
                 new InternalItemsQuery
@@ -334,13 +500,28 @@ public sealed class CollectionSyncService(
             .FirstOrDefault();
 
         if (existing is not null)
+        {
+            // Identity is the provider id, so a rename has to be pushed onto the BoxSet
+            // explicitly — otherwise a row renamed in the settings page keeps its old
+            // display name forever, and the user has no way to tell the two apart.
+            if (!string.Equals(existing.Name, name, StringComparison.Ordinal))
+            {
+                log.LogInformation("Renaming collection {Old} to {New}", existing.Name, name);
+
+                existing.Name = name;
+                await existing
+                    .UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+
             return existing;
+        }
 
         var created = await collectionManager
             .CreateCollectionAsync(
                 new CollectionCreationOptions
                 {
-                    Name = row.Name,
+                    Name = name,
                     IsLocked = true,
                     ProviderIds = new Dictionary<string, string> { { "Stremio", providerId } },
                 }
