@@ -26,6 +26,8 @@
                 style="padding: 0.5em 0; border-bottom: 2px solid #00a4dc; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 1;">General</button>
               <button type="button" class="paper-icon-button-light tab-button" data-tab="catalogs"
                 style="padding: 0.5em 0; border-bottom: 2px solid transparent; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 0.6;">Catalogs</button>
+              <button type="button" class="paper-icon-button-light tab-button" data-tab="collections"
+                style="padding: 0.5em 0; border-bottom: 2px solid transparent; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 0.6;">Collections</button>
               <button type="button" class="paper-icon-button-light tab-button" data-tab="userconfigs"
                 style="padding: 0.5em 0; border-bottom: 2px solid transparent; cursor: pointer; background: none; color: inherit; font-weight: bold; opacity: 0.6;">User Configs</button>
               <button type="button" class="paper-icon-button-light tab-button" data-tab="advanced"
@@ -179,6 +181,52 @@
             </div>
           </div>
 
+          <!-- Collections Tab -->
+          <div id="tab-collections" class="tab-content" style="display: none;">
+            <div class="verticalSection">
+              <div class="sectionTitleContainer">
+                <h3 class="sectionTitle">Auto-updating collections</h3>
+                <div class="fieldDescription" id="collectionsDisabledNotice"
+                  style="display: none; color: #ff8a80;">
+                  Collection sync is disabled. Add a TMDB API key to enable it.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">
+                  TMDB API key:
+                </label>
+                <input is="emby-input" type="text" id="txtTmdbApiKey" class="emby-input" />
+                <div class="fieldDescription">
+                  Falls back to the Jellyfin TMDB plugin's key. Without either, sync stays off.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtGlobalItemCeiling">
+                  Global item ceiling:
+                </label>
+                <input is="emby-input" type="number" id="txtGlobalItemCeiling"
+                  class="emby-input" />
+                <div class="fieldDescription">
+                  Maximum items this feature may create in total. 0 means unlimited.
+                </div>
+              </div>
+
+              <div id="collectionRowsList"
+                style="max-height: 600px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; background: rgba(0,0,0,0.2);">
+                <!-- Rows rendered here -->
+              </div>
+
+              <div style="margin-top: 1.5em; display: flex; justify-content: flex-end;">
+                <button type="button" is="emby-button" class="raised emby-button"
+                  id="btnAddCollectionRow">
+                  <span>Add collection</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Advanced Tab (FFmpeg & Overrides) -->
           <div id="tab-advanced" class="tab-content" style="display: none;">
             <h3 class="sectionTitle">FFmpeg Settings</h3>
@@ -317,6 +365,11 @@
         const txtFFmpegProbeSize = page.querySelector('#txtFFmpegProbeSize');
         const chkEnableJavaScriptInjection = page.querySelector('#chkEnableJavaScriptInjection');
         const chkLazyImages = page.querySelector('#chkLazyImages');
+
+        // Collections
+        const txtTmdbApiKey = page.querySelector('#txtTmdbApiKey');
+        const txtGlobalItemCeiling = page.querySelector('#txtGlobalItemCeiling');
+        const collectionsDisabledNotice = page.querySelector('#collectionsDisabledNotice');
 
         // Catalogs
         const catalogsList = page.querySelector('#catalogsList');
@@ -613,6 +666,22 @@
             if (chkEnableJavaScriptInjection) chkEnableJavaScriptInjection.checked = cfg.EnableJavaScriptInjection || false;
             if (chkLazyImages) chkLazyImages.checked = cfg.LazyImages ?? false;
 
+            if (txtTmdbApiKey) txtTmdbApiKey.value = cfg.TmdbApiKey || "";
+            if (txtGlobalItemCeiling) txtGlobalItemCeiling.value = cfg.GlobalItemCeiling ?? 25000;
+
+            // Collections: reflect whether sync has an API key to work with. Otherwise this
+            // state is silent and baffling — the tab just does nothing on task run.
+            if (collectionsDisabledNotice) {
+              try {
+                const status = await window.ApiClient.getJSON(
+                  window.ApiClient.getUrl('gelato/collections/status')
+                );
+                collectionsDisabledNotice.style.display = status.Enabled ? 'none' : 'block';
+              } catch (e) {
+                console.error(e);
+              }
+            }
+
             // User Overrides Logic
             await loadUsers();
             renderOverridesList();
@@ -648,6 +717,15 @@
             cfg.FFmpegProbeSize = txtFFmpegProbeSize.value;
             cfg.EnableJavaScriptInjection = chkEnableJavaScriptInjection.checked;
             cfg.LazyImages = chkLazyImages.checked;
+
+            cfg.TmdbApiKey = txtTmdbApiKey.value.trim();
+            cfg.GlobalItemCeiling = parseInt(txtGlobalItemCeiling.value) || 0;
+            // Collection rows are owned by the gelato/collections controller, not this config
+            // blob. Writing cfg.CollectionRows here would race with that controller and could
+            // clobber rows added concurrently or resurrect ones just deleted, so it is
+            // deliberately left untouched — getPluginConfiguration above already carries
+            // whatever CollectionRows the server currently has, and updatePluginConfiguration
+            // below sends that same value straight back.
 
             // Only collect catalog states if catalogs have been loaded (i.e., if we're on catalogs tab or it was loaded)
             if (allCatalogs.length > 0) {
