@@ -1,10 +1,24 @@
-name: "🚀 Publish Plugin"
+name: "🧪 Publish Dev Prerelease"
+
+# Mirrors publish.yml, but for prereleases only, writing a separate manifest.
+#
+# GitHub emits `prereleased` (not `released`) when a release is published with the
+# prerelease flag, so this workflow and publish.yml are mutually exclusive — a given
+# release triggers exactly one of them.
+#
+# The resulting manifest lives alongside the stable one on gh-pages:
+#   stable → .../gh-pages/repository.json
+#   dev    → .../gh-pages/repository-dev.json
+#
+# Add the dev URL as a second plugin repository in Jellyfin to install prereleases.
+# Both manifests carry the same plugin GUID, so Jellyfin resolves to whichever version
+# is highest — keep dev versions BELOW the next stable version, or only configure the
+# dev repository while actively testing.
 
 on:
   release:
     types:
-      - released
-  workflow_dispatch:
+      - prereleased
 
 permissions:
   contents: write
@@ -41,14 +55,11 @@ jobs:
     needs:
       - upload
     steps:
-      - name: Jellyfin plugin repo
+      - name: Jellyfin plugin repo (dev channel)
         uses: Kevinjil/jellyfin-plugin-repo-action@v0.4.3
         with:
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          # The action regenerates the manifest by scanning EVERY release on the repo, not
-          # just the one that triggered it. Without this, a single dev prerelease would be
-          # swept into the stable manifest on the next production release — and since
-          # Jellyfin resolves a plugin GUID to the highest version it sees, live servers
-          # could be offered a dev build. Prereleases belong in repository-dev.json.
-          ignorePrereleases: true
+          # Same gh-pages branch, separate file — no extra branch to create or clean up,
+          # and the two workflows never write the same path.
+          pagesFile: repository-dev.json
