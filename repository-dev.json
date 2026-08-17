@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "category": "General",
+    "description": "Stream external media.\n",
+    "guid": "94EA4E14-8163-4989-96FE-0A2094BC2D6A",
+    "name": "Gelato",
+    "overview": "Stream external media.",
+    "owner": "lstb1t",
+    "versions": [
+      {
+        "changelog": "Dev prerelease for testing the auto-updating collections feature.\n\nTMDB film franchises materialised as Jellyfin BoxSets, refreshed on a schedule. Includes the TMDB client layer, a settings tab with row management, and the CatalogService config-persistence fix.\n\n**Not verified against a running server.** Six first-run checks remain — see `docs/superpowers/specs/2026-08-16-collections-followups.md`.\n\nInstall via the dev manifest:\n`https://raw.githubusercontent.com/adamlippert/Chocolate-Gelato/refs/heads/gh-pages/repository-dev.json`\n\nDo not enable a large collection row yet.",
+        "checksum": "42298dbd4c29d016be0dbf0bb5c56581",
+        "sourceUrl": "https://github.com/adamlippert/Chocolate-Gelato/releases/download/v0.26.16.1/gelato_0.26.16.1.zip",
+        "targetAbi": "10.11.6.0",
+        "timestamp": "2026-08-17T01:58:03Z",
+        "version": "0.26.16.1"
+      },
+      {
+        "changelog": "### 🚀 Features\n\n- Add opt-in **direct play** so streams are fetched by the client instead of being proxied through the Jellyfin server.\n\nEnable under Dashboard → Plugins → Gelato → *Direct play streams (do not proxy through the server)*. Off by default.\n\nSaves server bandwidth and reduces start-up buffering. Note that the stream URL becomes visible to the client, including any debrid token embedded in it. P2P streams are always proxied. Clients still fall back to server streaming when they cannot play the format natively.",
+        "checksum": "a5b284d64e92a434f18d74e56d5a0556",
+        "sourceUrl": "https://github.com/adamlippert/Chocolate-Gelato/releases/download/v0.26.16.0/gelato_0.26.16.0.zip",
+        "targetAbi": "10.11.6.0",
+        "timestamp": "2026-08-11T01:53:51Z",
+        "version": "0.26.16.0"
+      }
+    ]
+  }
+]
