@@ -6,6 +6,33 @@ server**. Everything below is the output of review, not observation.
 
 ---
 
+## 0. Status — all six checks passed
+
+Verified 2026-08-17 against `jellyfin.survivalbunker.xyz` (Jellyfin 10.11.11, Gelato 0.26.16.1,
+1,627-movie Gelato library). Every check in §1 below passed; they are kept for the record and for
+re-running after future changes.
+
+| Check | Result |
+|---|---|
+| `RequiresElevation` on a plugin controller | 200 on all endpoints |
+| Row rename reaches the BoxSet title | Updated immediately; no stale-instance effect |
+| **BoxSet removals take effect** | **4 → 2 members** — see §3, now closed |
+| Auto-mode BoxSet count | 5 BoxSets from a 15-item capped row, one per franchise |
+| Empty-source safety net | Populated collection survived a keyless sync intact |
+| Catalog settings survive a read | Endpoint returned 8; persisted config stayed 0 |
+
+Also confirmed in passing:
+
+- **Enum binding works** — `Kind`/`Mode` round-trip as strings, closing the risk that every save would 400.
+- **Create-path protection works** — a new row comes back with no `LastSyncedUtc`.
+- **Invariants 1 and 3 hold against real pre-existing data.** Of four films in a test collection, three
+  already existed in the library and were reused; only the missing one was created. A full 1,627-movie
+  scan found exactly one row per film — none missing, none duplicated.
+
+**One number to know before enabling Auto mode:** this library has 1,617 movies carrying a TMDB id
+across **311 distinct franchises**. An uncapped Auto row would create at least 311 BoxSets and import
+the missing members of each. Start with a cap.
+
 ## 1. Check these first on a real server
 
 In priority order. The first one gates everything else.
@@ -56,7 +83,7 @@ The second decides whether series can use TMDB at all in a later phase.
 
 ---
 
-## 3. The one thing static review could not settle
+## 3. ~~The one thing static review could not settle~~ — settled, it works
 
 BoxSet membership is `LinkedChildren`. Jellyfin's removal path matches entries by `ItemId` or `Path`,
 but the decorator persists both as null — so removal works only because `GetLinkedChildren()` populates
@@ -68,7 +95,13 @@ so the population happens on the same instance the removal will use. That is cor
 server, because the implementing assembly is not a NuGet dependency.
 
 If the assumption fails: additions work, removals silently no-op, and the log fills with `-N` lines
-while nothing changes. Hence check #3 above.
+while nothing changes.
+
+**Resolved 2026-08-17: the assumption holds.** Capping a populated collection to two items dropped its
+BoxSet from four members to two on a live server. `GetItemById` does return an instance whose
+`GetLinkedChildren()` call populates `ItemId` for the removal path, so the re-resolve added in `e9a6ef5`
+was both necessary and sufficient. The post-condition warning stays in place as a regression detector —
+if it ever fires, this assumption has broken.
 
 ---
 
