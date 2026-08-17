@@ -46,3 +46,9 @@ jobs:
         with:
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
+          # The action regenerates the manifest by scanning EVERY release on the repo, not
+          # just the one that triggered it. Without this, a single dev prerelease would be
+          # swept into the stable manifest on the next production release — and since
+          # Jellyfin resolves a plugin GUID to the highest version it sees, live servers
+          # could be offered a dev build. Prereleases belong in repository-dev.json.
+          ignorePrereleases: true
